@@ -1,0 +1,1398 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Калькулятор себестоимости</title>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,300;1,400&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+  import { getDatabase, ref, set, push, get } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
+  import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyCEWWRUKpJ2tJdsUkTfMTKTH7Lfmc9dZs0",
+    authDomain: "cenarecepta-calc.firebaseapp.com",
+    databaseURL: "https://cenarecepta-calc-default-rtdb.europe-west1.firebasedatabase.app",
+    projectId: "cenarecepta-calc",
+    storageBucket: "cenarecepta-calc.firebasestorage.app",
+    messagingSenderId: "72447381131",
+    appId: "1:72447381131:web:dee8cf51dd3af8133d4e8e"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const db = getDatabase(app);
+  const auth = getAuth(app);
+
+  // Анонимный вход
+  signInAnonymously(auth).catch(console.error);
+
+  // Глобальная функция сохранения
+  window.saveRecipe = async function() {
+    const tgUsername = document.getElementById('tg-username').value.trim().replace('@','');
+    const recipeName = document.getElementById('recipe-name').value.trim();
+
+    if (!tgUsername) {
+      showSaveMsg('⚠️ Введи Telegram username', 'error');
+      return;
+    }
+    if (!recipeName) {
+      showSaveMsg('⚠️ Введи название рецептуры', 'error');
+      return;
+    }
+
+    const btn = document.getElementById('save-btn');
+    btn.textContent = '⏳ Сохраняю...';
+    btn.disabled = true;
+
+    try {
+      // Собираем данные калькулятора
+      const ingredients = [];
+      document.querySelectorAll('#ing-rows .ing-row').forEach(row => {
+        const inputs = row.querySelectorAll('input');
+        ingredients.push({
+          name: inputs[0].value || '',
+          price: parseFloat(inputs[1].value) || 0,
+          pkg: parseFloat(inputs[2].value) || 0,
+          recipe: parseFloat(inputs[3].value) || 0
+        });
+      });
+
+      const consumables = [];
+      document.querySelectorAll('#cons-rows .ing-row').forEach(row => {
+        const inputs = row.querySelectorAll('input');
+        consumables.push({
+          name: inputs[0].value || '',
+          price: parseFloat(inputs[1].value) || 0,
+          pkg: parseFloat(inputs[2].value) || 0,
+          per: parseFloat(inputs[3].value) || 0
+        });
+      });
+
+      const decor = [];
+      document.querySelectorAll('#decor-rows .ing-row').forEach(row => {
+        const inputs = row.querySelectorAll('input');
+        decor.push({
+          name: inputs[0].value || '',
+          price: parseFloat(inputs[1].value) || 0,
+          pkg: parseFloat(inputs[2].value) || 0,
+          per: parseFloat(inputs[3].value) || 0
+        });
+      });
+
+      const costEl = document.getElementById('r-cost').textContent;
+      const priceEl = document.getElementById('r-price').textContent;
+
+      const recipe = {
+        name: recipeName,
+        created: new Date().toISOString(),
+        yield_count: parseFloat(document.getElementById('yield-count').value) || 12,
+        ingredients,
+        consumables,
+        decor,
+        labor: {
+          hourly: parseFloat(document.getElementById('hourly').value) || 650,
+          time_minutes: parseFloat(document.getElementById('time-batch').value) || 60
+        },
+        overhead: {
+          equipment_cost: parseFloat(document.getElementById('equip-cost').value) || 0,
+          equipment_life: parseFloat(document.getElementById('equip-life').value) || 5,
+          batches_per_month: parseFloat(document.getElementById('batches-month').value) || 20,
+          utilities_per_month: parseFloat(document.getElementById('util-month').value) || 0
+        },
+        business: {
+          ads: parseFloat(document.getElementById('biz-ads').value) || 0,
+          edu: parseFloat(document.getElementById('biz-edu').value) || 0,
+          tax_pct: parseFloat(document.getElementById('biz-tax').value) || 0,
+          risk_pct: parseFloat(document.getElementById('biz-risk').value) || 0
+        },
+        markup_pct: parseFloat(document.getElementById('markup-input').value) || 100,
+        cost_per_unit: parseFloat(costEl) || 0,
+        price_per_unit: parseFloat(priceEl) || 0
+      };
+
+      const recipeRef = ref(db, `recipes/${tgUsername}`);
+      const newRef = push(recipeRef);
+      await set(newRef, recipe);
+
+      showSaveMsg('✅ Рецептура сохранена! Напиши /recipes боту @' + (window.BOT_USERNAME || 'cenarecepta_bot'), 'success');
+    } catch(e) {
+      showSaveMsg('❌ Ошибка: ' + e.message, 'error');
+    }
+
+    btn.textContent = '◆ Сохранить рецептуру';
+    btn.disabled = false;
+  };
+
+  function showSaveMsg(text, type) {
+    const el = document.getElementById('save-msg');
+    el.textContent = text;
+    el.style.color = type === 'success' ? 'var(--green)' : 'var(--red)';
+    el.style.display = 'block';
+    setTimeout(() => el.style.display = 'none', 5000);
+  }
+</script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0f0e0b;
+    --paper: #1a1812;
+    --card: #201e18;
+    --border: #2e2b22;
+    --gold: #c8a84b;
+    --gold2: #e8cc78;
+    --gold3: #f5e4a8;
+    --cream: #e8dfc8;
+    --muted: #7a7260;
+    --red: #c0504a;
+    --green: #5a8c64;
+    --text: #d4cbb8;
+    --section-hover: #1e1c16;
+    --font-serif: 'Cormorant Garamond', Georgia, serif;
+    --font-mono: 'DM Mono', monospace;
+  }
+
+  :root.light {
+    --bg: #f5f0e8;
+    --paper: #ede7d9;
+    --card: #e8e1d0;
+    --border: #cfc6b0;
+    --gold: #9a7830;
+    --gold2: #7a5e1e;
+    --gold3: #5a4210;
+    --cream: #2c2410;
+    --muted: #8a7f6a;
+    --red: #b03030;
+    --green: #3a6e44;
+    --text: #3a3220;
+    --section-hover: #dfd8c8;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-serif);
+    min-height: 100vh;
+    padding: 0 0 80px;
+    transition: background .3s, color .3s;
+  }
+
+  /* ── HEADER ── */
+  header {
+    text-align: center;
+    padding: 60px 24px 40px;
+    border-bottom: 1px solid var(--border);
+    position: relative;
+    overflow: hidden;
+  }
+  header::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(ellipse 60% 80% at 50% 0%, rgba(200,168,75,.08) 0%, transparent 70%);
+    pointer-events: none;
+  }
+  .logo-line {
+    display: flex; align-items: center; justify-content: center; gap: 16px;
+    margin-bottom: 10px;
+  }
+  .logo-diamond {
+    width: 8px; height: 8px;
+    background: var(--gold);
+    transform: rotate(45deg);
+    flex-shrink: 0;
+  }
+  h1 {
+    font-size: clamp(28px, 5vw, 52px);
+    font-weight: 300;
+    letter-spacing: .08em;
+    color: var(--gold2);
+    line-height: 1;
+  }
+  .subtitle {
+    font-size: 13px;
+    font-family: var(--font-mono);
+    letter-spacing: .2em;
+    color: var(--muted);
+    text-transform: uppercase;
+    margin-top: 8px;
+  }
+
+  /* ── LAYOUT ── */
+  .main {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 40px 20px 0;
+    display: flex;
+    flex-direction: column;
+    gap: 28px;
+  }
+
+  /* ── SECTION CARD ── */
+  .section {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .section-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 16px 22px;
+    border-bottom: 1px solid var(--border);
+    background: var(--paper);
+    cursor: pointer;
+    user-select: none;
+  }
+  .section-header:hover { background: var(--section-hover); }
+  .section-num {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--gold);
+    letter-spacing: .1em;
+    width: 24px;
+    flex-shrink: 0;
+  }
+  .section-title {
+    font-size: 16px;
+    font-weight: 400;
+    color: var(--cream);
+    flex: 1;
+    letter-spacing: .04em;
+  }
+  .section-total {
+    font-family: var(--font-mono);
+    font-size: 14px;
+    color: var(--gold2);
+    min-width: 80px;
+    text-align: right;
+  }
+  .chevron {
+    color: var(--muted);
+    font-size: 12px;
+    transition: transform .2s;
+    margin-left: 8px;
+  }
+  .section.collapsed .chevron { transform: rotate(-90deg); }
+  .section-body {
+    padding: 20px 22px;
+  }
+  .section.collapsed .section-body { display: none; }
+
+  /* ── INGREDIENTS TABLE ── */
+  .ing-head {
+    display: grid;
+    grid-template-columns: 1fr 100px 100px 100px 36px;
+    gap: 8px;
+    padding: 0 0 10px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 12px;
+  }
+  .ing-head span {
+    font-family: var(--font-mono);
+    font-size: 9px;
+    letter-spacing: .15em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .ing-row {
+    display: grid;
+    grid-template-columns: 1fr 100px 100px 100px 36px;
+    gap: 8px;
+    margin-bottom: 8px;
+    align-items: center;
+  }
+  .ing-cost {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    color: var(--gold);
+    text-align: right;
+    padding-right: 4px;
+  }
+
+  /* ── INPUTS ── */
+  input[type=text], input[type=number] {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 1px;
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    padding: 7px 10px;
+    outline: none;
+    transition: border-color .15s;
+    -moz-appearance: textfield;
+  }
+  input[type=number]::-webkit-inner-spin-button,
+  input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; }
+  input:focus { border-color: var(--gold); color: var(--cream); }
+  input::placeholder { color: var(--muted); font-size: 11px; }
+
+  .btn-add {
+    margin-top: 12px;
+    background: none;
+    border: 1px dashed var(--border);
+    color: var(--muted);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: .1em;
+    padding: 8px 16px;
+    cursor: pointer;
+    transition: all .15s;
+    border-radius: 1px;
+  }
+  .btn-add:hover { border-color: var(--gold); color: var(--gold); }
+
+  .btn-del {
+    background: none;
+    border: none;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 16px;
+    line-height: 1;
+    padding: 4px;
+    transition: color .15s;
+  }
+  .btn-del:hover { color: var(--red); }
+
+  /* ── SIMPLE ROW ── */
+  .field-row {
+    display: grid;
+    grid-template-columns: 1fr 140px;
+    gap: 10px;
+    align-items: center;
+    margin-bottom: 12px;
+  }
+  .field-label {
+    font-size: 14px;
+    color: var(--text);
+  }
+  .field-hint {
+    font-size: 11px;
+    font-family: var(--font-mono);
+    color: var(--muted);
+    margin-top: 2px;
+  }
+
+  /* ── SEPARATOR ── */
+  .sep {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 16px 0;
+  }
+
+  /* ── RESULT ── */
+  .result-card {
+    background: linear-gradient(135deg, #1e1a0e 0%, #16140c 100%);
+    border: 1px solid var(--gold);
+    border-radius: 2px;
+    padding: 32px;
+    position: relative;
+    overflow: hidden;
+  }
+  .result-card::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(ellipse 80% 60% at 50% 0%, rgba(200,168,75,.07) 0%, transparent 70%);
+    pointer-events: none;
+  }
+  .result-title {
+    font-family: var(--font-mono);
+    font-size: 9px;
+    letter-spacing: .3em;
+    text-transform: uppercase;
+    color: var(--muted);
+    text-align: center;
+    margin-bottom: 28px;
+  }
+  .result-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1px;
+    background: var(--border);
+    border: 1px solid var(--border);
+    margin-bottom: 24px;
+  }
+  .result-cell {
+    background: var(--card);
+    padding: 16px 20px;
+  }
+  .result-cell-label {
+    font-size: 11px;
+    font-family: var(--font-mono);
+    color: var(--muted);
+    letter-spacing: .1em;
+    margin-bottom: 6px;
+  }
+  .result-cell-value {
+    font-family: var(--font-mono);
+    font-size: 22px;
+    color: var(--gold2);
+  }
+  .result-cell-value small {
+    font-size: 13px;
+    color: var(--muted);
+  }
+  .result-big {
+    text-align: center;
+  }
+  .result-big-label {
+    font-size: 13px;
+    color: var(--muted);
+    letter-spacing: .1em;
+    margin-bottom: 8px;
+    font-family: var(--font-mono);
+  }
+  .result-big-value {
+    font-size: clamp(42px, 8vw, 72px);
+    font-family: var(--font-mono);
+    color: var(--gold3);
+    letter-spacing: -.02em;
+    line-height: 1;
+  }
+  .result-big-curr {
+    font-size: 24px;
+    color: var(--gold);
+    margin-left: 6px;
+  }
+
+  .breakdown {
+    margin-top: 20px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border);
+  }
+  .breakdown-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    padding: 5px 0;
+    font-size: 13px;
+  }
+  .breakdown-row .name { color: var(--muted); }
+  .breakdown-row .val { font-family: var(--font-mono); color: var(--text); }
+  .breakdown-row.total { 
+    border-top: 1px solid var(--border);
+    margin-top: 6px;
+    padding-top: 10px;
+    font-size: 15px;
+  }
+  .breakdown-row.total .name { color: var(--cream); }
+  .breakdown-row.total .val { color: var(--gold2); }
+
+  /* ── MARKUP SLIDER ── */
+  .markup-wrap {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-top: 6px;
+  }
+  input[type=range] {
+    flex: 1;
+    -webkit-appearance: none;
+    height: 2px;
+    background: var(--border);
+    outline: none;
+    border-radius: 2px;
+  }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 16px; height: 16px;
+    background: var(--gold);
+    border-radius: 50%;
+    cursor: pointer;
+    box-shadow: 0 0 0 3px rgba(200,168,75,.15);
+  }
+  .markup-val {
+    font-family: var(--font-mono);
+    font-size: 16px;
+    color: var(--gold2);
+    min-width: 52px;
+    text-align: right;
+  }
+
+  /* ── CALC BTN ── */
+  .calc-btn {
+    width: 100%;
+    background: var(--gold);
+    color: #0f0e0b;
+    border: none;
+    padding: 16px;
+    font-family: var(--font-mono);
+    font-size: 13px;
+    letter-spacing: .2em;
+    text-transform: uppercase;
+    cursor: pointer;
+    border-radius: 1px;
+    transition: background .15s, transform .1s;
+    margin-top: 8px;
+  }
+  .calc-btn:hover { background: var(--gold2); }
+  .calc-btn:active { transform: scale(.99); }
+
+  /* ── THEME TOGGLE ── */
+  .theme-toggle {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    z-index: 100;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 40px;
+    padding: 5px;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    cursor: pointer;
+    transition: background .3s, border-color .3s;
+    box-shadow: 0 2px 12px rgba(0,0,0,.2);
+  }
+  .theme-btn {
+    width: 32px; height: 32px;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 16px;
+    transition: background .2s;
+    user-select: none;
+  }
+  .theme-btn.active {
+    background: var(--gold);
+  }
+  .theme-btn:not(.active) { opacity: .4; }
+
+  /* ── FOOTER ── */
+  .footer {
+    text-align: center;
+    padding: 48px 24px 0;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: .2em;
+    color: var(--muted);
+    text-transform: uppercase;
+  }
+  .footer-brand {
+    font-size: 14px;
+    color: var(--gold);
+    letter-spacing: .3em;
+    margin-bottom: 4px;
+  }
+  .footer a {
+    color: var(--muted);
+    text-decoration: none;
+    transition: color .15s;
+  }
+  .footer a:hover { color: var(--gold); }
+
+  /* ── LIGHT THEME TWEAKS ── */
+  :root.light header::before {
+    background: radial-gradient(ellipse 60% 80% at 50% 0%, rgba(154,120,48,.08) 0%, transparent 70%);
+  }
+  :root.light .result-card {
+    background: linear-gradient(135deg, #e0d8c4 0%, #d8d0bc 100%);
+    border-color: var(--gold);
+  }
+  :root.light .result-card::before {
+    background: radial-gradient(ellipse 80% 60% at 50% 0%, rgba(154,120,48,.06) 0%, transparent 70%);
+  }
+  :root.light input[type=text],
+  :root.light input[type=number] {
+    background: #f0ead8;
+    color: var(--text);
+  }
+  :root.light input:focus { color: var(--cream); }
+  :root.light .calc-btn {
+    background: var(--gold);
+    color: #f5f0e8;
+  }
+  :root.light .calc-btn:hover { background: var(--gold2); color: #f5f0e8; }
+  :root.light input[type=range] { background: var(--border); }
+  :root.light .theme-toggle { box-shadow: 0 2px 12px rgba(0,0,0,.08); }
+
+  @media(max-width: 600px) {
+    .theme-toggle { top: 12px; right: 12px; }
+  }
+
+  /* ── TTK BUTTON ── */
+  .ttk-btn {
+    width: 100%;
+    background: transparent;
+    color: var(--gold);
+    border: 1px solid var(--gold);
+    padding: 14px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    letter-spacing: .18em;
+    text-transform: uppercase;
+    cursor: pointer;
+    border-radius: 1px;
+    transition: all .2s;
+    margin-top: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+  }
+  .ttk-btn:hover { background: rgba(200,168,75,.1); color: var(--gold2); border-color: var(--gold2); }
+  .ttk-btn:active { transform: scale(.99); }
+
+  /* ── TTK MODAL ── */
+  .ttk-modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,.75);
+    z-index: 1000;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }
+  .ttk-modal-overlay.open { display: flex; }
+  .ttk-modal {
+    background: var(--card);
+    border: 1px solid var(--gold);
+    border-radius: 3px;
+    padding: 28px;
+    max-width: 500px;
+    width: 100%;
+    max-height: 90vh;
+    overflow-y: auto;
+  }
+  .ttk-modal-title {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: .25em;
+    text-transform: uppercase;
+    color: var(--gold);
+    margin-bottom: 18px;
+  }
+  .ttk-field {
+    margin-bottom: 14px;
+  }
+  .ttk-field label {
+    display: block;
+    font-size: 12px;
+    font-family: var(--font-mono);
+    color: var(--muted);
+    letter-spacing: .08em;
+    margin-bottom: 6px;
+    text-transform: uppercase;
+  }
+  .ttk-field input, .ttk-field select {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 1px;
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    padding: 8px 12px;
+    outline: none;
+    transition: border-color .15s;
+  }
+  .ttk-field input:focus, .ttk-field select:focus { border-color: var(--gold); }
+  .ttk-field select option { background: var(--card); }
+  .ttk-modal-btns {
+    display: flex;
+    gap: 10px;
+    margin-top: 20px;
+  }
+  .ttk-modal-btns .calc-btn { margin: 0; flex: 1; }
+  .ttk-cancel {
+    flex: 0 0 auto;
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: .1em;
+    padding: 10px 16px;
+    cursor: pointer;
+    border-radius: 1px;
+    transition: all .15s;
+  }
+  .ttk-cancel:hover { border-color: var(--red); color: var(--red); }
+  .ttk-note {
+    font-size: 11px;
+    font-family: var(--font-mono);
+    color: var(--muted);
+    line-height: 1.6;
+    margin-top: 14px;
+    padding: 10px;
+    background: var(--paper);
+    border-radius: 1px;
+  }
+</style>
+</head>
+<body>
+
+<!-- THEME TOGGLE -->
+<div class="theme-toggle" onclick="toggleTheme()" title="Переключить тему">
+  <div class="theme-btn active" id="btn-dark">🌙</div>
+  <div class="theme-btn" id="btn-light">☀️</div>
+</div>
+
+<header>
+  <div class="logo-line">
+    <div class="logo-diamond"></div>
+    <h1>Калькулятор себестоимости</h1>
+    <div class="logo-diamond"></div>
+  </div>
+  <p class="subtitle">Кондитерские изделия · Полная стоимость</p>
+</header>
+
+<div class="main">
+
+  <!-- НАЗВАНИЕ РЕЦЕПТУРЫ -->
+  <div class="section" id="sec-name">
+    <div class="section-header" style="cursor:default">
+      <span class="section-num">✦</span>
+      <span class="section-title">Название рецептуры</span>
+    </div>
+    <div class="section-body">
+      <div class="field-row">
+        <div>
+          <div class="field-label">Как называется изделие</div>
+          <div class="field-hint">Например: Зефир ванильный, Восьмёрка клубника</div>
+        </div>
+        <input type="text" id="recipe-name" placeholder="Название рецептуры">
+      </div>
+    </div>
+  </div>
+
+  <!-- 0. Выход -->
+  <div class="section" id="sec-yield">
+    <div class="section-header" onclick="toggleSection('sec-yield')">
+      <span class="section-num">00</span>
+      <span class="section-title">Выход изделий из одного замеса</span>
+      <span class="section-total" id="tot-yield">—</span>
+      <span class="chevron">▾</span>
+    </div>
+    <div class="section-body">
+      <div class="field-row">
+        <div>
+          <div class="field-label">Количество штук из замеса</div>
+          <div class="field-hint">Например: 12 восьмёрок</div>
+        </div>
+        <input type="number" id="yield-count" value="12" min="1" oninput="calc()">
+      </div>
+    </div>
+  </div>
+
+  <!-- 1. Ингредиенты -->
+  <div class="section" id="sec-ing">
+    <div class="section-header" onclick="toggleSection('sec-ing')">
+      <span class="section-num">01</span>
+      <span class="section-title">Ингредиенты (на замес)</span>
+      <span class="section-total" id="tot-ing">0.00 ₽/пор</span>
+      <span class="chevron">▾</span>
+    </div>
+    <div class="section-body">
+      <div class="ing-head">
+        <span>Ингредиент</span>
+        <span>Цена пачки, ₽</span>
+        <span>Объём пачки</span>
+        <span>В рецепте</span>
+        <span></span>
+      </div>
+      <div id="ing-rows"></div>
+      <button class="btn-add" onclick="addIng()">+ Добавить ингредиент</button>
+    </div>
+  </div>
+
+  <!-- 2. Расходники -->
+  <div class="section" id="sec-cons">
+    <div class="section-header" onclick="toggleSection('sec-cons')">
+      <span class="section-num">02</span>
+      <span class="section-title">Расходники (палочки, пергамент, мешки)</span>
+      <span class="section-total" id="tot-cons">0.00 ₽</span>
+      <span class="chevron">▾</span>
+    </div>
+    <div class="section-body">
+      <div class="ing-head">
+        <span>Расходник</span>
+        <span>Цена пачки, ₽</span>
+        <span>Штук в пачке</span>
+        <span>На изделие, шт</span>
+        <span></span>
+      </div>
+      <div id="cons-rows"></div>
+      <button class="btn-add" onclick="addCons()">+ Добавить расходник</button>
+    </div>
+  </div>
+
+  <!-- 3. Декор и упаковка -->
+  <div class="section" id="sec-decor">
+    <div class="section-header" onclick="toggleSection('sec-decor')">
+      <span class="section-num">03</span>
+      <span class="section-title">Декор и упаковка</span>
+      <span class="section-total" id="tot-decor">0.00 ₽</span>
+      <span class="chevron">▾</span>
+    </div>
+    <div class="section-body">
+      <div class="ing-head">
+        <span>Элемент декора</span>
+        <span>Цена пачки, ₽</span>
+        <span>Штук в пачке</span>
+        <span>На изделие, шт</span>
+        <span></span>
+      </div>
+      <div id="decor-rows"></div>
+      <button class="btn-add" onclick="addDecor()">+ Добавить элемент</button>
+    </div>
+  </div>
+
+  <!-- 4. Амортизация -->
+  <div class="section" id="sec-amor">
+    <div class="section-header" onclick="toggleSection('sec-amor')">
+      <span class="section-num">04</span>
+      <span class="section-title">Амортизация оборудования</span>
+      <span class="section-total" id="tot-amor">0.00 ₽</span>
+      <span class="chevron">▾</span>
+    </div>
+    <div class="section-body">
+      <div class="field-row">
+        <div>
+          <div class="field-label">Стоимость техники (миксер, плита, весы)</div>
+          <div class="field-hint">Общая сумма всего оборудования</div>
+        </div>
+        <input type="number" id="equip-cost" placeholder="0" oninput="calc()">
+      </div>
+      <div class="field-row">
+        <div>
+          <div class="field-label">Срок службы, лет</div>
+        </div>
+        <input type="number" id="equip-life" value="5" min="1" oninput="calc()">
+      </div>
+      <div class="field-row">
+        <div>
+          <div class="field-label">Замесов в месяц</div>
+        </div>
+        <input type="number" id="batches-month" value="20" min="1" oninput="calc()">
+      </div>
+      <div style="font-family:var(--font-mono);font-size:11px;color:var(--muted);margin-top:4px" id="amor-hint"></div>
+    </div>
+  </div>
+
+  <!-- 5. Коммуналка -->
+  <div class="section" id="sec-util">
+    <div class="section-header" onclick="toggleSection('sec-util')">
+      <span class="section-num">05</span>
+      <span class="section-title">Коммуналка (свет, вода, газ)</span>
+      <span class="section-total" id="tot-util">0.00 ₽</span>
+      <span class="chevron">▾</span>
+    </div>
+    <div class="section-body">
+      <div class="field-row">
+        <div>
+          <div class="field-label">Расходы на коммуналку в месяц, ₽</div>
+        </div>
+        <input type="number" id="util-month" placeholder="0" oninput="calc()">
+      </div>
+    </div>
+  </div>
+
+  <!-- 6. Труд -->
+  <div class="section" id="sec-labor">
+    <div class="section-header" onclick="toggleSection('sec-labor')">
+      <span class="section-num">06</span>
+      <span class="section-title">Ваш труд</span>
+      <span class="section-total" id="tot-labor">0.00 ₽</span>
+      <span class="chevron">▾</span>
+    </div>
+    <div class="section-body">
+      <div class="field-row">
+        <div>
+          <div class="field-label">Ваша ставка в час, ₽</div>
+          <div class="field-hint">Рекомендуется 600–700 ₽/ч</div>
+        </div>
+        <input type="number" id="hourly" placeholder="650" oninput="calc()">
+      </div>
+      <div class="field-row">
+        <div>
+          <div class="field-label">Время на один замес, минут</div>
+          <div class="field-hint">Всё время на партию: замес + готовка + упаковка</div>
+        </div>
+        <input type="number" id="time-batch" placeholder="60" oninput="calc()">
+      </div>
+    </div>
+  </div>
+
+  <!-- 7. Бизнес-расходы -->
+  <div class="section" id="sec-biz">
+    <div class="section-header" onclick="toggleSection('sec-biz')">
+      <span class="section-num">07</span>
+      <span class="section-title">Бизнес-расходы (реклама, налоги, риски)</span>
+      <span class="section-total" id="tot-biz">0.00 ₽</span>
+      <span class="chevron">▾</span>
+    </div>
+    <div class="section-body">
+      <div class="field-row">
+        <div>
+          <div class="field-label">Реклама и продвижение в месяц, ₽</div>
+        </div>
+        <input type="number" id="biz-ads" placeholder="0" oninput="calc()">
+      </div>
+      <div class="field-row">
+        <div>
+          <div class="field-label">Курсы / развитие в месяц, ₽</div>
+        </div>
+        <input type="number" id="biz-edu" placeholder="0" oninput="calc()">
+      </div>
+      <div class="field-row">
+        <div>
+          <div class="field-label">Налог самозанятого, %</div>
+          <div class="field-hint">Обычно 4–6%</div>
+        </div>
+        <input type="number" id="biz-tax" placeholder="6" oninput="calc()">
+      </div>
+      <div class="field-row">
+        <div>
+          <div class="field-label">Резерв на брак и возвраты, %</div>
+          <div class="field-hint">Рекомендуется 5–10%</div>
+        </div>
+        <input type="number" id="biz-risk" placeholder="7" oninput="calc()">
+      </div>
+    </div>
+  </div>
+
+  <!-- 8. Наценка -->
+  <div class="section" id="sec-markup">
+    <div class="section-header" onclick="toggleSection('sec-markup')">
+      <span class="section-num">08</span>
+      <span class="section-title">Наценка бизнеса</span>
+      <span class="section-total" id="tot-markup">×2.0</span>
+      <span class="chevron">▾</span>
+    </div>
+    <div class="section-body">
+      <div class="field-label" style="margin-bottom:12px">Коэффициент наценки: <span style="color:var(--muted);font-size:12px">100% = продажа по себестоимости, 100% наценка = ×2</span></div>
+      <div class="markup-wrap">
+        <input type="range" id="markup-range" min="0" max="300" value="100" oninput="syncMarkup(this.value)">
+        <span class="markup-val" id="markup-display">100%</span>
+      </div>
+      <div style="margin-top:12px;display:flex;gap:10px;align-items:center">
+        <span style="font-size:13px;color:var(--muted)">Или введите вручную:</span>
+        <input type="number" id="markup-input" value="100" min="0" max="500" style="width:90px" oninput="syncMarkupInput(this.value)">
+        <span style="color:var(--muted)">%</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- RESULT -->
+  <div class="result-card">
+    <div class="result-title">◆ Итог расчёта ◆</div>
+    <div class="result-grid">
+      <div class="result-cell">
+        <div class="result-cell-label">СЕБЕСТОИМОСТЬ ЗАМЕСА</div>
+        <div class="result-cell-value" id="r-cost-batch">—</div>
+      </div>
+      <div class="result-cell">
+        <div class="result-cell-label">СЕБЕСТОИМОСТЬ / порция</div>
+        <div class="result-cell-value" id="r-cost">—</div>
+      </div>
+      <div class="result-cell">
+        <div class="result-cell-label">ЦЕНА ЗАМЕСА</div>
+        <div class="result-cell-value" id="r-price-batch">—</div>
+      </div>
+      <div class="result-cell">
+        <div class="result-cell-label">ЦЕНА ПРОДАЖИ / порция</div>
+        <div class="result-cell-value" id="r-price" style="color:var(--gold3)">—</div>
+      </div>
+    </div>
+    <div class="result-big">
+      <div class="result-big-label">РЕКОМЕНДУЕМАЯ ЦЕНА</div>
+      <div><span class="result-big-value" id="r-price-big">—</span><span class="result-big-curr">₽</span></div>
+    </div>
+    <div class="breakdown" id="breakdown"></div>
+  </div>
+
+  <button class="calc-btn" onclick="calc()">◆ Пересчитать ◆</button>
+  <button class="ttk-btn" onclick="openTTKModal()">◇ Создать технологическую документацию (ТТК / ТК / Калькуляция)</button>
+
+  <!-- SAVE BLOCK -->
+  <div class="section" style="margin-top:0">
+    <div class="section-header" style="cursor:default">
+      <span class="section-num">💾</span>
+      <span class="section-title">Сохранить рецептуру в Telegram</span>
+    </div>
+    <div class="section-body">
+      <div class="field-row">
+        <div>
+          <div class="field-label">Твой Telegram username</div>
+          <div class="field-hint">Без @ — например: anna_cake</div>
+        </div>
+        <input type="text" id="tg-username" placeholder="username">
+      </div>
+      <button class="calc-btn" id="save-btn" onclick="saveRecipe()" style="margin-top:8px">◆ Сохранить рецептуру</button>
+      <div id="save-msg" style="display:none;margin-top:12px;font-family:var(--font-mono);font-size:13px;padding:10px;border-radius:2px;background:var(--paper)"></div>
+    </div>
+  </div>
+
+</div>
+
+<!-- TTK MODAL -->
+<div class="ttk-modal-overlay" id="ttkModalOverlay">
+  <div class="ttk-modal">
+    <div class="ttk-modal-title">◆ Параметры документации</div>
+
+    <div class="ttk-field">
+      <label>Номер карты (ТТК №)</label>
+      <input type="number" id="ttk-num" placeholder="Например: 1001" value="1001">
+    </div>
+    <div class="ttk-field">
+      <label>Дата составления</label>
+      <input type="text" id="ttk-date" placeholder="дд.мм.гггг">
+    </div>
+    <div class="ttk-field">
+      <label>Выход одной порции, г</label>
+      <input type="number" id="ttk-yield" placeholder="Например: 150">
+    </div>
+    <div class="ttk-field">
+      <label>Способ приготовления</label>
+      <select id="ttk-method">
+        <option value="выпечка в духовом шкафу">Выпечка в духовом шкафу</option>
+        <option value="паровая обработка">Паровая обработка</option>
+        <option value="варка">Варка</option>
+        <option value="жарка">Жарка</option>
+        <option value="холодная обработка без термообработки">Холодная обработка</option>
+        <option value="взбивание и сборка (без тепловой обработки)">Взбивание и сборка</option>
+      </select>
+    </div>
+    <div class="ttk-field">
+      <label>Температура хранения</label>
+      <select id="ttk-temp">
+        <option value="+4">+4°C (стандарт)</option>
+        <option value="+2...+6">+2...+6°C</option>
+        <option value="-18">−18°C (заморозка)</option>
+        <option value="18–22">18–22°C (без холодильника)</option>
+      </select>
+    </div>
+    <div class="ttk-field">
+      <label>Срок хранения, часов</label>
+      <input type="number" id="ttk-hours" value="24" min="1">
+    </div>
+
+    <div class="ttk-note">
+      Ингредиенты и цены будут взяты из калькулятора автоматически.<br>
+      Брутто = нетто = количество в рецепте (г/мл).<br>
+      Документ откроется в новой вкладке.
+    </div>
+
+    <div class="ttk-modal-btns">
+      <button class="ttk-cancel" onclick="closeTTKModal()">Отмена</button>
+      <button class="calc-btn" onclick="goToTTK()">◆ Открыть генератор</button>
+    </div>
+  </div>
+</div>
+
+<!-- FOOTER -->
+<div class="footer">
+  <div class="footer-brand">◆ PYRA ◆</div>
+  <div>Разработано <a href="https://anton67678.github.io/site-pira-network/" target="_blank">Pyramid Network</a></div>
+</div>
+
+<script>
+// ── STATE ──
+let ingredients = [];
+let consumables = [];
+let decor = [];
+
+// ── THEME ──
+function toggleTheme() {
+  const isLight = document.documentElement.classList.toggle('light');
+  document.getElementById('btn-dark').classList.toggle('active', !isLight);
+  document.getElementById('btn-light').classList.toggle('active', isLight);
+}
+
+// ── INIT ──
+addIng({name:'Белок яичный', price: 80, pkg: 500, recipe: 150});
+addIng({name:'Сахар', price: 60, pkg: 1000, recipe: 200});
+addIng({name:'Агар-агар', price: 120, pkg: 50, recipe: 8});
+addIng({name:'Джем', price: 90, pkg: 400, recipe: 60});
+addCons({name:'Пергамент', price: 80, pkg: 20, per: 1});
+addDecor({name:'Пакет', price: 50, pkg: 20, per: 1});
+
+calc();
+
+// ── HELPERS ──
+function v(id) { return parseFloat(document.getElementById(id)?.value) || 0; }
+function fmt(n) { return n.toFixed(2); }
+
+function toggleSection(id) {
+  const s = document.getElementById(id);
+  s.classList.toggle('collapsed');
+}
+
+function syncMarkup(val) {
+  document.getElementById('markup-input').value = val;
+  document.getElementById('markup-display').textContent = val + '%';
+  document.getElementById('tot-markup').textContent = '×' + (1 + val/100).toFixed(1);
+  calc();
+}
+function syncMarkupInput(val) {
+  const clamped = Math.max(0, Math.min(300, val));
+  document.getElementById('markup-range').value = clamped;
+  document.getElementById('markup-display').textContent = clamped + '%';
+  document.getElementById('tot-markup').textContent = '×' + (1 + clamped/100).toFixed(1);
+  calc();
+}
+
+// ── INGREDIENTS ──
+function addIng(data = {}) {
+  const id = Date.now() + Math.random();
+  ingredients.push(id);
+  const div = document.createElement('div');
+  div.className = 'ing-row';
+  div.id = 'ing-' + id;
+  div.innerHTML = `
+    <input type="text" placeholder="Название" value="${data.name||''}">
+    <input type="number" placeholder="0" value="${data.price||''}" oninput="calc()">
+    <input type="number" placeholder="г / мл" value="${data.pkg||''}" oninput="calc()">
+    <input type="number" placeholder="г / мл" value="${data.recipe||''}" oninput="calc()">
+    <button class="btn-del" onclick="removeRow('ing','${id}')">×</button>
+  `;
+  document.getElementById('ing-rows').appendChild(div);
+  calc();
+}
+
+function addCons(data = {}) {
+  const id = Date.now() + Math.random();
+  consumables.push(id);
+  const div = document.createElement('div');
+  div.className = 'ing-row';
+  div.id = 'cons-' + id;
+  div.innerHTML = `
+    <input type="text" placeholder="Название" value="${data.name||''}">
+    <input type="number" placeholder="0" value="${data.price||''}" oninput="calc()">
+    <input type="number" placeholder="шт" value="${data.pkg||''}" oninput="calc()">
+    <input type="number" placeholder="шт" value="${data.per||''}" step="0.1" oninput="calc()">
+    <button class="btn-del" onclick="removeRow('cons','${id}')">×</button>
+  `;
+  document.getElementById('cons-rows').appendChild(div);
+  calc();
+}
+
+function addDecor(data = {}) {
+  const id = Date.now() + Math.random();
+  decor.push(id);
+  const div = document.createElement('div');
+  div.className = 'ing-row';
+  div.id = 'decor-' + id;
+  div.innerHTML = `
+    <input type="text" placeholder="Название" value="${data.name||''}">
+    <input type="number" placeholder="0" value="${data.price||''}" oninput="calc()">
+    <input type="number" placeholder="шт" value="${data.pkg||''}" oninput="calc()">
+    <input type="number" placeholder="шт" value="${data.per||''}" step="0.1" oninput="calc()">
+    <button class="btn-del" onclick="removeRow('decor','${id}')">×</button>
+  `;
+  document.getElementById('decor-rows').appendChild(div);
+  calc();
+}
+
+function removeRow(type, id) {
+  document.getElementById(type + '-' + id)?.remove();
+  if (type === 'ing') ingredients = ingredients.filter(x => x != id);
+  if (type === 'cons') consumables = consumables.filter(x => x != id);
+  if (type === 'decor') decor = decor.filter(x => x != id);
+  calc();
+}
+
+// ── MAIN CALC ──
+function calc() {
+  const yieldCount = Math.max(1, v('yield-count'));
+
+  // 1. Ингредиенты (цена упаковки / объём упаковки × кол-во в рецепте)
+  let ingTotal = 0;
+  document.querySelectorAll('#ing-rows .ing-row').forEach(row => {
+    const inputs = row.querySelectorAll('input[type=number]');
+    const price = parseFloat(inputs[0].value) || 0;
+    const pkg   = parseFloat(inputs[1].value) || 1;
+    const rec   = parseFloat(inputs[2].value) || 0;
+    ingTotal += (price / pkg) * rec;
+  });
+  const ingPerUnit = ingTotal / yieldCount;
+  document.getElementById('tot-ing').textContent = fmt(ingPerUnit) + ' ₽';
+
+  // 2. Расходники (цена упаковки / штук в упаковке × штук на изделие)
+  let consTotal = 0;
+  document.querySelectorAll('#cons-rows .ing-row').forEach(row => {
+    const inputs = row.querySelectorAll('input[type=number]');
+    const price = parseFloat(inputs[0].value) || 0;
+    const pkg   = parseFloat(inputs[1].value) || 1;
+    const per   = parseFloat(inputs[2].value) || 0;
+    consTotal += (price / pkg) * per;
+  });
+  document.getElementById('tot-cons').textContent = fmt(consTotal) + ' ₽';
+
+  // 3. Декор (цена упаковки / штук в упаковке × штук на изделие)
+  let decorTotal = 0;
+  document.querySelectorAll('#decor-rows .ing-row').forEach(row => {
+    const inputs = row.querySelectorAll('input[type=number]');
+    const price = parseFloat(inputs[0].value) || 0;
+    const pkg   = parseFloat(inputs[1].value) || 1;
+    const per   = parseFloat(inputs[2].value) || 0;
+    decorTotal += (price / pkg) * per;
+  });
+  document.getElementById('tot-decor').textContent = fmt(decorTotal) + ' ₽';
+
+  // 4. Амортизация
+  const equipCost = v('equip-cost');
+  const equipLife = Math.max(1, v('equip-life'));
+  const batchesMonth = Math.max(1, v('batches-month'));
+  const amorPerBatch = equipCost / (equipLife * 12 * batchesMonth);
+  const amorPerUnit = amorPerBatch / yieldCount;
+  document.getElementById('tot-amor').textContent = fmt(amorPerUnit) + ' ₽';
+  document.getElementById('amor-hint').textContent = equipCost ? `${fmt(amorPerBatch)} ₽/замес → ${fmt(amorPerUnit)} ₽/шт` : '';
+
+  // 5. Коммуналка (защита от деления на ноль)
+  const utilMonth = v('util-month');
+  const utilPerUnit = utilMonth / (Math.max(1, batchesMonth) * Math.max(1, yieldCount));
+  document.getElementById('tot-util').textContent = fmt(utilPerUnit) + ' ₽';
+
+  // 6. Труд — время на ВЕСЬ замес, делим на количество порций
+  const hourly = v('hourly') || 650;
+  const timeBatch = v('time-batch') || 60;
+  const laborPerUnit = (hourly / 60) * timeBatch / yieldCount;
+  document.getElementById('tot-labor').textContent = fmt(laborPerUnit) + ' ₽';
+
+  // 7. Фиксированные бизнес-расходы (реклама, обучение)
+  const bizAds = v('biz-ads');
+  const bizEdu = v('biz-edu');
+  const fixedBizPerUnit = (bizAds + bizEdu) / (Math.max(1, batchesMonth) * Math.max(1, yieldCount));
+
+  // Резерв на брак (% от прямых затрат)
+  const riskPct = v('biz-risk') || 0;
+  const directCost = ingPerUnit + consTotal + decorTotal + amorPerUnit + utilPerUnit + laborPerUnit + fixedBizPerUnit;
+  const riskAmt = directCost * riskPct / 100;
+
+  // Себестоимость без налога
+  const costBeforeTax = directCost + riskAmt;
+
+  // 8. Налог самозанятого считается С ВЫРУЧКИ:
+  // цена = себестоимость / (1 - налог%)
+  // налог = цена × налог%
+  const taxPct = v('biz-tax') || 0;
+  const taxRate = taxPct / 100;
+
+  // Итоговая себестоимость с учётом налога
+  // cost + tax = cost + price * taxRate, где price = cost * (1 + markup/100)
+  // Считаем налог как долю от итоговой цены продажи
+  const markupPct = parseFloat(document.getElementById('markup-input')?.value) || 100;
+  const priceBeforeTax = costBeforeTax * (1 + markupPct / 100);
+  const taxAmt = priceBeforeTax * taxRate;
+
+  // Финальная цена с налогом уже включённым
+  const price = priceBeforeTax / (1 - taxRate);
+  const cost = costBeforeTax + taxAmt;
+
+  const bizTotal = fixedBizPerUnit + riskAmt + taxAmt;
+  document.getElementById('tot-biz').textContent = fmt(bizTotal) + ' ₽';
+
+  // Output
+  document.getElementById('r-cost').textContent = fmt(cost) + ' ₽';
+  document.getElementById('r-cost-batch').textContent = fmt(cost * yieldCount) + ' ₽';
+  document.getElementById('r-price').textContent = fmt(price) + ' ₽';
+  document.getElementById('r-price-batch').textContent = fmt(price * yieldCount) + ' ₽';
+  document.getElementById('r-price-big').textContent = Math.ceil(price);
+  document.getElementById('tot-ing').textContent = fmt(ingPerUnit) + ' ₽/пор · ' + fmt(ingTotal) + ' ₽/зам';
+
+  // Breakdown
+  const bd = document.getElementById('breakdown');
+  bd.innerHTML = `
+    <div class="breakdown-row"><span class="name">Ингредиенты</span><span class="val">${fmt(ingPerUnit)} ₽</span></div>
+    <div class="breakdown-row"><span class="name">Расходники</span><span class="val">${fmt(consTotal)} ₽</span></div>
+    <div class="breakdown-row"><span class="name">Декор и упаковка</span><span class="val">${fmt(decorTotal)} ₽</span></div>
+    <div class="breakdown-row"><span class="name">Амортизация</span><span class="val">${fmt(amorPerUnit)} ₽</span></div>
+    <div class="breakdown-row"><span class="name">Коммуналка</span><span class="val">${fmt(utilPerUnit)} ₽</span></div>
+    <div class="breakdown-row"><span class="name">Ваш труд (${timeBatch} мин на замес ÷ ${yieldCount} шт)</span><span class="val">${fmt(laborPerUnit)} ₽</span></div>
+    <div class="breakdown-row"><span class="name">Реклама и обучение</span><span class="val">${fmt(fixedBizPerUnit)} ₽</span></div>
+    <div class="breakdown-row"><span class="name">Резерв на брак ${riskPct}%</span><span class="val">${fmt(riskAmt)} ₽</span></div>
+    <div class="breakdown-row"><span class="name">Налог ${taxPct}% (с выручки)</span><span class="val">${fmt(taxAmt)} ₽</span></div>
+    <div class="breakdown-row total"><span class="name">Себестоимость замеса</span><span class="val">${fmt(cost * yieldCount)} ₽</span></div>
+    <div class="breakdown-row total"><span class="name">Себестоимость / порция</span><span class="val">${fmt(cost)} ₽</span></div>
+    <div class="breakdown-row total" style="border-top:1px solid var(--gold);margin-top:4px"><span class="name" style="color:var(--gold2)">Цена продажи / порция (наценка ${markupPct}%)</span><span class="val" style="color:var(--gold3)">${fmt(price)} ₽</span></div>
+    <div class="breakdown-row total" style="margin-top:2px"><span class="name" style="color:var(--gold2)">Цена продажи замеса</span><span class="val" style="color:var(--gold3)">${fmt(price * yieldCount)} ₽</span></div>
+  `;
+}
+
+// ── TTK INTEGRATION ──
+function openTTKModal() {
+  const today = new Date();
+  const dd = String(today.getDate()).padStart(2,'0');
+  const mm = String(today.getMonth()+1).padStart(2,'0');
+  const yyyy = today.getFullYear();
+  document.getElementById('ttk-date').value = `${dd}.${mm}.${yyyy}`;
+  document.getElementById('ttkModalOverlay').classList.add('open');
+}
+
+function closeTTKModal() {
+  document.getElementById('ttkModalOverlay').classList.remove('open');
+}
+
+function goToTTK() {
+  const recipeName = document.getElementById('recipe-name').value.trim() || 'Кондитерское изделие';
+  const yieldCount = Math.max(1, v('yield-count'));
+  const ingredients = [];
+
+  // Ингредиенты: нетто на 1 порцию = кол-во в рецепте / количество порций
+  document.querySelectorAll('#ing-rows .ing-row').forEach(row => {
+    const inputs = row.querySelectorAll('input');
+    const name   = inputs[0].value || '';
+    const price  = parseFloat(inputs[1].value) || 0;
+    const pkg    = parseFloat(inputs[2].value) || 1;
+    const recipe = parseFloat(inputs[3].value) || 0;
+    if (!name && !recipe) return;
+    const netto = parseFloat((recipe / yieldCount).toFixed(2));
+    const price_per_kg = pkg > 0 ? parseFloat(((price / pkg) * 1000).toFixed(2)) : 0;
+    ingredients.push({ name, brutto: netto, netto, yield_g: netto, price_per_kg, calories: 0, protein: 0, fat: 0, carbs: 0 });
+  });
+
+  // Расходники
+  document.querySelectorAll('#cons-rows .ing-row').forEach(row => {
+    const inputs = row.querySelectorAll('input');
+    const name  = inputs[0].value || '';
+    const price = parseFloat(inputs[1].value) || 0;
+    const pkg   = parseFloat(inputs[2].value) || 1;
+    const per   = parseFloat(inputs[3].value) || 0;
+    if (!name && !per) return;
+    const price_per_kg = pkg > 0 ? parseFloat(((price / pkg) * 1000).toFixed(2)) : 0;
+    ingredients.push({ name: name + ' (расходник)', brutto: per, netto: per, yield_g: per, price_per_kg, calories: 0, protein: 0, fat: 0, carbs: 0 });
+  });
+
+  // Декор
+  document.querySelectorAll('#decor-rows .ing-row').forEach(row => {
+    const inputs = row.querySelectorAll('input');
+    const name  = inputs[0].value || '';
+    const price = parseFloat(inputs[1].value) || 0;
+    const pkg   = parseFloat(inputs[2].value) || 1;
+    const per   = parseFloat(inputs[3].value) || 0;
+    if (!name && !per) return;
+    const price_per_kg = pkg > 0 ? parseFloat(((price / pkg) * 1000).toFixed(2)) : 0;
+    ingredients.push({ name: name + ' (декор)', brutto: per, netto: per, yield_g: per, price_per_kg, calories: 0, protein: 0, fat: 0, carbs: 0 });
+  });
+
+  const json = {
+    dish_name: recipeName,
+    card_number: parseInt(document.getElementById('ttk-num').value) || 1001,
+    date: document.getElementById('ttk-date').value,
+    yield_per_portion: parseFloat(document.getElementById('ttk-yield').value) || null,
+    portions: 1,
+    cooking_method: document.getElementById('ttk-method').value,
+    storage_temp: document.getElementById('ttk-temp').value,
+    storage_hours: parseInt(document.getElementById('ttk-hours').value) || 24,
+    ingredients
+  };
+
+  try { sessionStorage.setItem('ttk_json', JSON.stringify(json, null, 2)); } catch(e) {}
+  window.open('ttk-generator.html?autoload=1', '_blank');
+  closeTTKModal();
+}
+
+document.getElementById('ttkModalOverlay').addEventListener('click', function(e) {
+  if (e.target === this) closeTTKModal();
+});
+</script>
+</body>
+</html>
