@@ -1,0 +1,1166 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Цена Рецепта — Генератор документации</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Source+Serif+4:ital,wght@0,300;0,400;0,600;1,300;1,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #1a1208;
+    --paper: #faf7f2;
+    --cream: #f2ede4;
+    --gold: #b8860b;
+    --gold-light: #d4a017;
+    --rust: #8b3a0f;
+    --sage: #5a6e4a;
+    --border: #d4c9b4;
+    --muted: #7a6e5e;
+    --card: #ffffff;
+    --shadow: rgba(26,18,8,0.08);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Source Serif 4', Georgia, serif;
+    background: var(--paper);
+    color: var(--ink);
+    min-height: 100vh;
+  }
+
+  /* ── HEADER ── */
+  header {
+    background: var(--ink);
+    color: var(--paper);
+    padding: 0 2rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 60px;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+  .logo {
+    font-family: 'Playfair Display', serif;
+    font-size: 1.2rem;
+    letter-spacing: 0.03em;
+  }
+  .logo span { color: var(--gold-light); }
+  .header-badge {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.65rem;
+    border: 1px solid rgba(212,160,23,0.4);
+    color: var(--gold-light);
+    padding: 3px 8px;
+    border-radius: 2px;
+    letter-spacing: 0.08em;
+  }
+
+  /* ── LAYOUT ── */
+  .app {
+    display: grid;
+    grid-template-columns: 420px 1fr;
+    min-height: calc(100vh - 60px);
+  }
+
+  /* ── LEFT PANEL ── */
+  .panel-left {
+    background: var(--cream);
+    border-right: 1px solid var(--border);
+    padding: 2rem;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+  }
+
+  .section-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.62rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 0.75rem;
+  }
+
+  .json-area {
+    width: 100%;
+    min-height: 260px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.72rem;
+    line-height: 1.6;
+    background: var(--ink);
+    color: #e8d9b0;
+    border: 1px solid #3a2e1a;
+    border-radius: 6px;
+    padding: 1rem;
+    resize: vertical;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+  .json-area:focus { border-color: var(--gold); }
+  .json-area::placeholder { color: #5a4e3a; }
+
+  .example-btn {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.65rem;
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    padding: 5px 10px;
+    border-radius: 3px;
+    cursor: pointer;
+    transition: all 0.15s;
+    letter-spacing: 0.05em;
+  }
+  .example-btn:hover { border-color: var(--gold); color: var(--gold); }
+
+  .docs-checklist { display: flex; flex-direction: column; gap: 0.5rem; }
+  .doc-check {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    cursor: pointer;
+    padding: 0.5rem 0.75rem;
+    border-radius: 4px;
+    transition: background 0.15s;
+  }
+  .doc-check:hover { background: rgba(184,134,11,0.07); }
+  .doc-check input[type="checkbox"] { display: none; }
+  .check-box {
+    width: 16px; height: 16px;
+    border: 1.5px solid var(--border);
+    border-radius: 2px;
+    display: flex; align-items: center; justify-content: center;
+    transition: all 0.15s;
+    flex-shrink: 0;
+  }
+  .doc-check input:checked + .check-box {
+    background: var(--gold);
+    border-color: var(--gold);
+  }
+  .check-mark { color: white; font-size: 10px; display: none; }
+  .doc-check input:checked + .check-box .check-mark { display: block; }
+  .doc-name {
+    font-size: 0.85rem;
+    color: var(--ink);
+  }
+  .doc-sub {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.6rem;
+    color: var(--muted);
+    margin-left: auto;
+  }
+
+  .gen-btn {
+    width: 100%;
+    background: var(--ink);
+    color: var(--paper);
+    border: none;
+    padding: 0.9rem 1.5rem;
+    font-family: 'Playfair Display', serif;
+    font-size: 1rem;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.6rem;
+    letter-spacing: 0.02em;
+  }
+  .gen-btn:hover:not(:disabled) { background: var(--rust); transform: translateY(-1px); }
+  .gen-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+  .spinner {
+    width: 16px; height: 16px;
+    border: 2px solid rgba(255,255,255,0.3);
+    border-top-color: white;
+    border-radius: 50%;
+    display: none;
+    animation: spin 0.7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .generating .spinner { display: block; }
+  .generating .btn-text { display: none; }
+
+  .error-box {
+    background: #fff0ed;
+    border: 1px solid #f5c6b8;
+    border-radius: 4px;
+    padding: 0.75rem 1rem;
+    font-size: 0.8rem;
+    color: var(--rust);
+    display: none;
+    line-height: 1.5;
+  }
+
+  /* ── RIGHT PANEL ── */
+  .panel-right {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* Tabs */
+  .tabs-bar {
+    background: var(--card);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    padding: 0 1.5rem;
+    gap: 0;
+    overflow-x: auto;
+    flex-shrink: 0;
+  }
+  .tab {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.65rem;
+    letter-spacing: 0.06em;
+    padding: 0.9rem 1.1rem;
+    border: none;
+    background: none;
+    color: var(--muted);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: all 0.15s;
+    white-space: nowrap;
+    text-transform: uppercase;
+  }
+  .tab:hover { color: var(--ink); }
+  .tab.active { color: var(--gold); border-bottom-color: var(--gold); }
+
+  .tab-actions {
+    margin-left: auto;
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    padding: 0 0.5rem;
+  }
+  .action-btn {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.62rem;
+    padding: 5px 10px;
+    border: 1px solid var(--border);
+    background: white;
+    color: var(--muted);
+    border-radius: 3px;
+    cursor: pointer;
+    transition: all 0.15s;
+    letter-spacing: 0.04em;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .action-btn:hover { border-color: var(--gold); color: var(--gold); }
+  .action-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+
+  /* Document area */
+  .doc-area {
+    flex: 1;
+    overflow-y: auto;
+    padding: 2.5rem 3rem;
+    background: var(--paper);
+  }
+
+  .empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    gap: 1rem;
+    color: var(--muted);
+    text-align: center;
+  }
+  .empty-icon {
+    font-size: 3rem;
+    opacity: 0.3;
+  }
+  .empty-title {
+    font-family: 'Playfair Display', serif;
+    font-size: 1.3rem;
+    color: var(--muted);
+  }
+  .empty-sub {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.65rem;
+    letter-spacing: 0.08em;
+    opacity: 0.6;
+  }
+
+  /* ── DOCUMENT STYLES ── */
+  .doc-content {
+    max-width: 820px;
+    margin: 0 auto;
+  }
+
+  .doc-header-block {
+    text-align: right;
+    margin-bottom: 2rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .doc-stamp {
+    font-size: 0.85rem;
+    color: var(--muted);
+    margin-bottom: 0.25rem;
+  }
+  .doc-sign-line {
+    display: inline-block;
+    width: 200px;
+    border-bottom: 1px solid var(--ink);
+    margin-left: 1rem;
+    vertical-align: middle;
+  }
+
+  .doc-title {
+    font-family: 'Playfair Display', serif;
+    font-size: 1.4rem;
+    font-weight: 700;
+    text-align: center;
+    margin-bottom: 0.4rem;
+  }
+  .doc-subtitle {
+    font-family: 'Playfair Display', serif;
+    font-size: 1.1rem;
+    font-weight: 600;
+    text-align: center;
+    margin-bottom: 2rem;
+    font-style: italic;
+  }
+
+  .doc-section {
+    margin-bottom: 1.8rem;
+  }
+  .doc-section-title {
+    font-family: 'Playfair Display', serif;
+    font-size: 1rem;
+    font-weight: 700;
+    margin-bottom: 0.75rem;
+    text-align: center;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .doc-text {
+    font-size: 0.9rem;
+    line-height: 1.75;
+    text-align: justify;
+  }
+
+  /* Tables */
+  .doc-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.82rem;
+    margin-bottom: 0.5rem;
+  }
+  .doc-table th {
+    background: var(--ink);
+    color: var(--paper);
+    padding: 8px 10px;
+    text-align: center;
+    font-family: 'Source Serif 4', serif;
+    font-weight: 600;
+    font-size: 0.78rem;
+    border: 1px solid var(--ink);
+  }
+  .doc-table td {
+    padding: 7px 10px;
+    border: 1px solid var(--border);
+    vertical-align: middle;
+  }
+  .doc-table tr:nth-child(even) td { background: #faf7f0; }
+  .doc-table tr:hover td { background: #f5f0e8; }
+  .doc-table td:first-child { text-align: center; color: var(--muted); font-size: 0.75rem; }
+  .doc-table td.num { text-align: right; font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; }
+  .doc-table td.total-row { font-weight: 600; background: #f0ebe0 !important; }
+
+  .doc-footer-row {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 0.5rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+  }
+
+  .doc-sign-block {
+    margin-top: 2.5rem;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+  }
+  .sign-line {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+  }
+  .sign-role { font-size: 0.8rem; color: var(--muted); }
+  .sign-underline {
+    border-bottom: 1px solid var(--border);
+    height: 24px;
+  }
+
+  .nutrition-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1rem;
+    margin-top: 0.75rem;
+  }
+  .nutrition-card {
+    background: var(--cream);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.75rem;
+    text-align: center;
+  }
+  .nutrition-value {
+    font-family: 'Playfair Display', serif;
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--rust);
+  }
+  .nutrition-unit { font-size: 0.7rem; color: var(--muted); }
+  .nutrition-label { font-size: 0.75rem; margin-top: 0.2rem; }
+
+  .gost-note {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.6rem;
+    color: var(--muted);
+    text-align: center;
+    margin-top: 2rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border);
+    letter-spacing: 0.06em;
+  }
+
+  .loading-overlay {
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    gap: 1.5rem;
+  }
+  .loading-text {
+    font-family: 'Playfair Display', serif;
+    font-size: 1.1rem;
+    color: var(--muted);
+  }
+  .loading-dots span {
+    display: inline-block;
+    width: 6px; height: 6px;
+    background: var(--gold);
+    border-radius: 50%;
+    margin: 0 3px;
+    animation: bounce 1.2s infinite;
+  }
+  .loading-dots span:nth-child(2) { animation-delay: 0.2s; }
+  .loading-dots span:nth-child(3) { animation-delay: 0.4s; }
+  @keyframes bounce { 0%,80%,100%{transform:scale(0.6)} 40%{transform:scale(1)} }
+
+  /* Print / PDF styles */
+  @media print {
+    header, .panel-left, .tabs-bar { display: none !important; }
+    .app { display: block; }
+    .panel-right { overflow: visible; }
+    .doc-area { padding: 1cm 2cm; }
+    body { background: white; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">Цена <span>Рецепта</span></div>
+  <div class="header-badge">ГОСТ Р 31987-2012</div>
+</header>
+
+<div class="app">
+  <!-- LEFT PANEL -->
+  <div class="panel-left">
+    <div>
+      <div class="section-label">JSON рецепта</div>
+      <textarea class="json-area" id="jsonInput" placeholder='{"dish_name": "Паровая телятина", "card_number": 1, ...}'></textarea>
+      <div style="margin-top:0.5rem; display:flex; gap:0.5rem; flex-wrap:wrap;">
+        <button class="example-btn" onclick="loadExample()">← пример JSON</button>
+        <button class="example-btn" onclick="clearJson()">очистить</button>
+      </div>
+    </div>
+
+    <div>
+      <div class="section-label">Документы</div>
+      <div class="docs-checklist">
+        <label class="doc-check">
+          <input type="checkbox" id="chk_ttk" checked>
+          <div class="check-box"><span class="check-mark">✓</span></div>
+          <span class="doc-name">Технико-технологическая карта</span>
+          <span class="doc-sub">ТТК</span>
+        </label>
+        <label class="doc-check">
+          <input type="checkbox" id="chk_tk" checked>
+          <div class="check-box"><span class="check-mark">✓</span></div>
+          <span class="doc-name">Технологическая карта</span>
+          <span class="doc-sub">ТК</span>
+        </label>
+        <label class="doc-check">
+          <input type="checkbox" id="chk_kk" checked>
+          <div class="check-box"><span class="check-mark">✓</span></div>
+          <span class="doc-name">Калькуляционная карта</span>
+          <span class="doc-sub">КК</span>
+        </label>
+        <label class="doc-check">
+          <input type="checkbox" id="chk_pv" checked>
+          <div class="check-box"><span class="check-mark">✓</span></div>
+          <span class="doc-name">Пищевая ценность</span>
+          <span class="doc-sub">КБЖУ</span>
+        </label>
+      </div>
+    </div>
+
+    <div id="errorBox" class="error-box"></div>
+
+    <button class="gen-btn" id="genBtn" onclick="generate()">
+      <div class="spinner"></div>
+      <span class="btn-text">Сформировать документы</span>
+    </button>
+
+    <div style="font-family:'JetBrains Mono',monospace; font-size:0.6rem; color:var(--muted); line-height:1.6;">
+      Документы формируются через Claude AI и соответствуют требованиям ГОСТ Р 31987-2012. Для печати используйте кнопку «Печать» в браузере.
+    </div>
+  </div>
+
+  <!-- RIGHT PANEL -->
+  <div class="panel-right">
+    <div class="tabs-bar" id="tabsBar">
+      <button class="tab active" data-tab="ttk">ТТК</button>
+      <button class="tab" data-tab="tk">ТК</button>
+      <button class="tab" data-tab="kk">Калькуляция</button>
+      <button class="tab" data-tab="pv">Пищевая ценность</button>
+      <div class="tab-actions">
+        <button class="action-btn" id="printBtn" disabled onclick="printDoc()">🖨 Печать</button>
+        <button class="action-btn" id="pdfBtn" disabled onclick="savePDF()">↓ PDF</button>
+      </div>
+    </div>
+
+    <div class="doc-area" id="docArea">
+      <div class="empty-state" id="emptyState">
+        <div class="empty-icon">📋</div>
+        <div class="empty-title">Документы не сформированы</div>
+        <div class="empty-sub">Введите JSON рецепта и нажмите «Сформировать»</div>
+      </div>
+      <div class="loading-overlay" id="loadingOverlay">
+        <div class="loading-dots"><span></span><span></span><span></span></div>
+        <div class="loading-text">Генерирую документацию…</div>
+      </div>
+      <div id="docContent" style="display:none;"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── STATE ──
+let docs = { ttk: '', tk: '', kk: '', pv: '' };
+let activeTab = 'ttk';
+let lastJson = null;
+
+// ── TABS ──
+document.querySelectorAll('.tab[data-tab]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab[data-tab]').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    activeTab = btn.dataset.tab;
+    renderDoc();
+  });
+});
+
+function renderDoc() {
+  const content = document.getElementById('docContent');
+  const html = docs[activeTab] || '';
+  if (html) {
+    content.innerHTML = html;
+    content.style.display = 'block';
+    document.getElementById('emptyState').style.display = 'none';
+    document.getElementById('loadingOverlay').style.display = 'none';
+  }
+}
+
+// ── EXAMPLE JSON ──
+function loadExample() {
+  const ex = {
+    dish_name: "Паровая телятина с салатным миксом",
+    card_number: 17166,
+    date: "13.04.2016",
+    yield_per_portion: 235,
+    portions: 1,
+    ingredients: [
+      { name: "Говядина вырезка", brutto: 220, netto: 206, yield_g: 130, price_per_kg: 1200, calories: 187, protein: 20.1, fat: 11.8, carbs: 0 },
+      { name: "Соль поваренная", brutto: 2, netto: 2, yield_g: 2, price_per_kg: 15, calories: 0, protein: 0, fat: 0, carbs: 0 },
+      { name: "Лимон", brutto: 24, netto: 10, yield_g: 10, price_per_kg: 120, calories: 34, protein: 0.9, fat: 0.1, carbs: 9.2 },
+      { name: "Зелень Тимьян", brutto: 2.3, netto: 2, yield_g: 2, price_per_kg: 400, calories: 101, protein: 2.3, fat: 1.0, carbs: 8.1 },
+      { name: "Зелень Розмарин", brutto: 3.4, netto: 3, yield_g: 3, price_per_kg: 380, calories: 131, protein: 3.3, fat: 5.9, carbs: 20.7 },
+      { name: "Чеснок", brutto: 6.4, netto: 5, yield_g: 5, price_per_kg: 180, calories: 149, protein: 6.5, fat: 0.5, carbs: 29.9 },
+      { name: "Морковь столовая свежая", brutto: 39, netto: 29, yield_g: 20, price_per_kg: 35, calories: 35, protein: 1.3, fat: 0.1, carbs: 6.9 },
+      { name: "Зелень Салат", brutto: 28, netto: 20, yield_g: 20, price_per_kg: 200, calories: 15, protein: 1.5, fat: 0.2, carbs: 2.1 },
+      { name: "Салат Лолло Бьянко", brutto: 6.9, netto: 5, yield_g: 5, price_per_kg: 250, calories: 14, protein: 1.3, fat: 0.2, carbs: 1.9 },
+      { name: "Помидоры черри", brutto: 36, netto: 35, yield_g: 35, price_per_kg: 280, calories: 20, protein: 0.6, fat: 0.2, carbs: 4.2 },
+      { name: "Голубика", brutto: 15, netto: 15, yield_g: 15, price_per_kg: 600, calories: 57, protein: 0.7, fat: 0.3, carbs: 14.9 },
+      { name: "Заправка бальзамическая", brutto: 10, netto: 10, yield_g: 10, price_per_kg: 450, calories: 88, protein: 0.5, fat: 0.3, carbs: 17.0 },
+      { name: "Каперсы маринованные", brutto: 7, netto: 7, yield_g: 7, price_per_kg: 380, calories: 23, protein: 2.4, fat: 0.9, carbs: 4.9 },
+      { name: "Маслины с косточкой", brutto: 8, netto: 8, yield_g: 8, price_per_kg: 320, calories: 166, protein: 1.0, fat: 17.3, carbs: 3.8 },
+      { name: "Соус бальзамический «Glassy»", brutto: 5, netto: 5, yield_g: 5, price_per_kg: 700, calories: 120, protein: 0.2, fat: 0.1, carbs: 30.2 },
+      { name: "Лук зелёный (перо)", brutto: 3.8, netto: 3, yield_g: 3, price_per_kg: 150, calories: 20, protein: 1.3, fat: 0.1, carbs: 4.3 }
+    ],
+    cooking_method: "паровая обработка",
+    storage_temp: "+4",
+    storage_hours: 24,
+    tech_process: ""
+  };
+  document.getElementById('jsonInput').value = JSON.stringify(ex, null, 2);
+}
+
+function clearJson() {
+  document.getElementById('jsonInput').value = '';
+  docs = { ttk: '', tk: '', kk: '', pv: '' };
+  document.getElementById('docContent').style.display = 'none';
+  document.getElementById('emptyState').style.display = 'flex';
+  document.getElementById('printBtn').disabled = true;
+  document.getElementById('pdfBtn').disabled = true;
+}
+
+// ── GENERATE ──
+async function generate() {
+  const raw = document.getElementById('jsonInput').value.trim();
+  const errorBox = document.getElementById('errorBox');
+  errorBox.style.display = 'none';
+
+  if (!raw) { showError('Вставьте JSON рецепта'); return; }
+  let recipe;
+  try { recipe = JSON.parse(raw); }
+  catch(e) { showError('Ошибка в JSON: ' + e.message); return; }
+
+  const wantTTK = document.getElementById('chk_ttk').checked;
+  const wantTK  = document.getElementById('chk_tk').checked;
+  const wantKK  = document.getElementById('chk_kk').checked;
+  const wantPV  = document.getElementById('chk_pv').checked;
+  if (!wantTTK && !wantTK && !wantKK && !wantPV) { showError('Выберите хотя бы один документ'); return; }
+
+  lastJson = recipe;
+  const btn = document.getElementById('genBtn');
+  btn.classList.add('generating');
+  btn.disabled = true;
+  document.getElementById('emptyState').style.display = 'none';
+  document.getElementById('docContent').style.display = 'none';
+  document.getElementById('loadingOverlay').style.display = 'flex';
+
+  docs = { ttk: '', tk: '', kk: '', pv: '' };
+
+  try {
+    // Calculate locally for speed: netto sum, costs, nutrition
+    const calc = calcLocally(recipe);
+
+    if (wantTTK) docs.ttk = await genViaAPI(recipe, calc, 'TTK');
+    if (wantTK)  docs.tk  = await genViaAPI(recipe, calc, 'TK');
+    if (wantKK)  docs.kk  = buildKK(recipe, calc);
+    if (wantPV)  docs.pv  = buildPV(recipe, calc);
+
+    document.getElementById('printBtn').disabled = false;
+    document.getElementById('pdfBtn').disabled = false;
+    renderDoc();
+  } catch(e) {
+    showError('Ошибка генерации: ' + e.message);
+    document.getElementById('emptyState').style.display = 'flex';
+    document.getElementById('loadingOverlay').style.display = 'none';
+  }
+
+  btn.classList.remove('generating');
+  btn.disabled = false;
+}
+
+// ── LOCAL CALCULATIONS ──
+function calcLocally(r) {
+  const ings = r.ingredients || [];
+  let totalNetto = 0, totalCost = 0;
+  let totalProt = 0, totalFat = 0, totalCarb = 0, totalCal = 0;
+
+  const rows = ings.map(ing => {
+    const netto = parseFloat(ing.netto) || 0;
+    const price = parseFloat(ing.price_per_kg) || 0;
+    const cost = (netto / 1000) * price;
+    totalNetto += netto;
+    totalCost  += cost;
+    totalProt  += ((ing.protein || 0) * netto / 100);
+    totalFat   += ((ing.fat    || 0) * netto / 100);
+    totalCarb  += ((ing.carbs  || 0) * netto / 100);
+    totalCal   += ((ing.calories || 0) * netto / 100);
+    return { ...ing, cost };
+  });
+
+  return { rows, totalNetto, totalCost, totalProt, totalFat, totalCarb, totalCal };
+}
+
+// ── API CALL ──
+// ── TECHNOLOGY PROCESS TEMPLATES ──
+function getTechProcess(recipe, calc) {
+  const method = (recipe.cooking_method || '').toLowerCase();
+  const name = recipe.dish_name || 'изделие';
+  const ings = (recipe.ingredients || []);
+  const ingNames = ings.filter(i => !i.name.includes('расходник') && !i.name.includes('декор')).map(i => i.name);
+  const mainIng = ingNames.slice(0, 3).join(', ');
+  const storage = `${recipe.storage_hours || 24} ч при температуре ${recipe.storage_temp || '+4'}°C`;
+
+  const templates = {
+    'выпечка': `Подготовка сырья производится в соответствии с действующими санитарными нормами и правилами.
+Все ингредиенты (${mainIng}) предварительно взвешивают и подготавливают согласно рецептуре.
+Сухие компоненты просеивают. Жиросодержащие ингредиенты доводят до необходимой температуры.
+Замешивают тесто (массу) в следующей последовательности: вначале соединяют жидкие компоненты, затем вводят сухие, перемешивают до однородной консистенции.
+Подготовленную массу помещают в форму (на противень), выстланный пергаментом.
+Выпекают в предварительно разогретом духовом шкафу при температуре 160–180°C в течение 25–40 минут до готовности (проба на сухую шпажку).
+Готовое изделие извлекают из формы, охлаждают при комнатной температуре.
+При необходимости наносят декор, глазурь или начинку согласно рецептуре.
+Готовое изделие оформляют и упаковывают. Подача осуществляется в соответствии с требованиями к оформлению.`,
+
+    'паров': `Подготовка сырья производится в соответствии с действующими санитарными нормами и правилами.
+Все ингредиенты (${mainIng}) предварительно взвешивают, промывают и подготавливают согласно рецептуре.
+Подготовленные ингредиенты укладывают в ёмкость пароварки или на решётку.
+Обработку производят паром при температуре 95–100°C в течение времени, необходимого для достижения готовности.
+Температура в центре готового продукта должна быть не ниже 85°C.
+Готовое изделие извлекают, охлаждают при необходимости, оформляют и подают.
+Хранение: ${storage}.`,
+
+    'варк': `Подготовка сырья производится в соответствии с действующими санитарными нормами и правилами.
+Все ингредиенты (${mainIng}) предварительно взвешивают и подготавливают согласно рецептуре.
+В кастрюлю наливают необходимое количество жидкости, доводят до кипения.
+Подготовленные компоненты закладывают в кипящую жидкость в последовательности, определяемой продолжительностью тепловой обработки каждого из них.
+Варят при слабом кипении до готовности, периодически снимая пену.
+Готовое изделие оформляют и подают согласно требованиям рецептуры.
+Хранение: ${storage}.`,
+
+    'взбив': `Подготовка сырья производится в соответствии с действующими санитарными нормами и правилами.
+Все ингредиенты (${mainIng}) предварительно взвешивают и подготавливают согласно рецептуре.
+Компоненты доводят до необходимой температуры. Белковые составляющие взбивают до устойчивых пиков.
+Сахаросодержащие компоненты нагревают до необходимой консистенции (при наличии в рецептуре).
+Все составляющие соединяют в технологически обоснованной последовательности, аккуратно перемешивают лопаткой или с помощью миксера.
+Готовую массу формуют (отсаживают через кондитерский мешок, разливают в форму и т.д.) согласно рецептуре.
+При необходимости изделие стабилизируют в холодильнике при температуре +4°C.
+Готовое изделие декорируют, оформляют и упаковывают.
+Хранение: ${storage}.`,
+
+    'холодн': `Подготовка сырья производится в соответствии с действующими санитарными нормами и правилами.
+Все ингредиенты (${mainIng}) предварительно взвешивают и подготавливают согласно рецептуре.
+Компоненты, требующие предварительной тепловой обработки, охлаждают до температуры +10°C и ниже.
+Ингредиенты смешивают в указанной последовательности. Заправку или соус добавляют непосредственно перед подачей или согласно рецептуре.
+Готовое изделие оформляют и немедленно подают или помещают на хранение.
+Хранение: ${storage}.`,
+  };
+
+  for (const [key, text] of Object.entries(templates)) {
+    if (method.includes(key)) return text;
+  }
+
+  // default
+  return `Подготовка сырья производится в соответствии с действующими санитарными нормами и правилами.
+Все ингредиенты (${mainIng || 'согласно рецептуре'}) предварительно взвешивают и подготавливают.
+Технологический процесс приготовления блюда «${name}» включает следующие операции: подготовку и дозирование сырья, перемешивание компонентов в установленной последовательности, тепловую или иную обработку (${recipe.cooking_method || 'согласно технологии'}), оформление и упаковку готового изделия.
+Качество готового изделия контролируется органолептически: внешний вид, цвет, запах, консистенция и вкус должны соответствовать характеристикам данного вида изделия.
+Готовое изделие оформляют и передают на реализацию.
+Хранение: ${storage}.`;
+}
+
+// ── LOCAL TTK BUILDER ──
+async function genViaAPI(recipe, calc, docType) {
+  const today = new Date().toLocaleDateString('ru-RU');
+  const date = recipe.date || today;
+  const name = recipe.dish_name || 'Изделие';
+  const num = recipe.card_number || '—';
+  const yieldVal = recipe.yield_per_portion ? `${recipe.yield_per_portion} г` : `${calc.totalNetto.toFixed(0)} г`;
+  const storage = `${recipe.storage_hours || 24} часа при температуре ${recipe.storage_temp || '+4'}°C (±2°C)`;
+  const techProcess = (recipe.tech_process && recipe.tech_process.trim())
+    ? recipe.tech_process.trim()
+    : getTechProcess(recipe, calc);
+
+  const ingRows = (recipe.ingredients || []).map((ing, i) => `
+    <tr>
+      <td>${i + 1}</td>
+      <td style="text-align:left">${ing.name}</td>
+      <td class="num">${parseFloat(ing.brutto || ing.netto).toFixed(1)}</td>
+      <td class="num">${parseFloat(ing.netto).toFixed(1)}</td>
+      <td class="num">${parseFloat(ing.yield_g || ing.netto).toFixed(1)}</td>
+    </tr>`).join('');
+
+  const ingRows10 = (recipe.ingredients || []).map((ing, i) => `
+    <tr>
+      <td>${i + 1}</td>
+      <td style="text-align:left">${ing.name}</td>
+      <td class="num">${parseFloat(ing.brutto || ing.netto).toFixed(1)}</td>
+      <td class="num">${parseFloat(ing.netto).toFixed(1)}</td>
+      <td class="num">${parseFloat(ing.yield_g || ing.netto).toFixed(1)}</td>
+      <td class="num">${(parseFloat(ing.brutto || ing.netto) * 10).toFixed(0)}</td>
+      <td class="num">${(parseFloat(ing.netto) * 10).toFixed(0)}</td>
+      <td class="num">${(parseFloat(ing.yield_g || ing.netto) * 10).toFixed(0)}</td>
+    </tr>`).join('');
+
+  if (docType === 'TTK') {
+    return `<div class="doc-content">
+      <div class="doc-header-block">
+        <div class="doc-stamp">Утверждаю</div>
+        <div class="doc-stamp">Руководитель <span class="doc-sign-line"></span></div>
+        <div class="doc-stamp" style="margin-top:6px">&nbsp;</div>
+      </div>
+
+      <div class="doc-title">Технико-технологическая карта № ${num} от ${date}</div>
+      <div class="doc-subtitle">${name}</div>
+
+      <div class="doc-section">
+        <div class="doc-section-title">1. Область применения</div>
+        <p class="doc-text">Настоящая технико-технологическая карта распространяется на блюдо (изделие) <strong>${name}</strong>, вырабатываемое на предприятиях общественного питания.</p>
+      </div>
+
+      <div class="doc-section">
+        <div class="doc-section-title">2. Требования к сырью</div>
+        <p class="doc-text">Продовольственное сырьё, пищевые продукты и полуфабрикаты, используемые для приготовления данного блюда (изделия), должны соответствовать требованиям Технического регламента Таможенного союза ТР ТС 021/2011 «О безопасности пищевой продукции», иметь сопроводительные документы, подтверждающие их безопасность и качество (декларацию о соответствии или сертификат соответствия).</p>
+      </div>
+
+      <div class="doc-section">
+        <div class="doc-section-title">3. Рецептура</div>
+        <table class="doc-table">
+          <thead>
+            <tr>
+              <th style="width:35px">№</th>
+              <th style="text-align:left">Наименование сырья и полуфабрикатов</th>
+              <th colspan="2">Расход сырья и п/ф на 1 порцию, г</th>
+              <th>Выход, г</th>
+            </tr>
+            <tr>
+              <th></th><th></th>
+              <th>Брутто</th><th>Нетто</th><th></th>
+            </tr>
+          </thead>
+          <tbody>${ingRows}</tbody>
+        </table>
+        <div class="doc-footer-row">
+          <span><strong>Выход полуфабриката, г: ${calc.totalNetto.toFixed(0)}</strong></span>
+          <span><strong>Выход готового изделия, г: ${yieldVal}</strong></span>
+        </div>
+      </div>
+
+      <div class="doc-section">
+        <div class="doc-section-title">4. Технологический процесс</div>
+        <p class="doc-text">${techProcess.replace(/\n/g, '</p><p class="doc-text" style="margin-top:0.5rem">')}</p>
+      </div>
+
+      <div class="doc-section">
+        <div class="doc-section-title">5. Условия хранения и сроки реализации</div>
+        <p class="doc-text">Допустимые сроки хранения блюда (изделия) — не более ${storage}.</p>
+        <p class="doc-text" style="margin-top:0.5rem">Реализация производится в соответствии с требованиями СанПиН 2.3.6.1079-01. Изделие не подлежит повторной заморозке и реализации по истечении сроков хранения.</p>
+      </div>
+
+      <div class="doc-sign-block">
+        <div class="sign-line"><span class="sign-role">Бухгалтер</span><div class="sign-underline"></div></div>
+        <div class="sign-line"><span class="sign-role">Шеф-повар</span><div class="sign-underline"></div></div>
+        <div class="sign-line" style="margin-top:1rem"><span class="sign-role">Ответственный за оформление ТТК</span><div class="sign-underline"></div></div>
+        <div class="sign-line" style="margin-top:1rem"><span class="sign-role">Дата</span><div class="sign-underline"></div></div>
+      </div>
+
+      <div class="gost-note">Документ подготовлен в соответствии с ГОСТ Р 31987-2012</div>
+    </div>`;
+  }
+
+  // ── TK ──
+  const pv = calc.totalCal > 0
+    ? `Белки: ${calc.totalProt.toFixed(1)} г; Жиры: ${calc.totalFat.toFixed(1)} г; Углеводы: ${calc.totalCarb.toFixed(1)} г; Калорийность: ${calc.totalCal.toFixed(0)} ккал (${(calc.totalCal * 4.184).toFixed(0)} кДж)`
+    : 'Данные о пищевой ценности уточняются';
+
+  return `<div class="doc-content">
+    <div class="doc-header-block">
+      <div class="doc-stamp">Утверждаю:</div>
+      <div class="doc-stamp">Руководитель <span class="doc-sign-line"></span></div>
+      <div class="doc-stamp" style="margin-top:6px">Источник рецептуры: <span class="doc-sign-line"></span></div>
+    </div>
+
+    <div class="doc-title">Технологическая карта № ${num} от ${date}</div>
+    <div class="doc-subtitle">${name}</div>
+
+    <div class="doc-section">
+      <table class="doc-table">
+        <thead>
+          <tr>
+            <th rowspan="2" style="width:35px">№</th>
+            <th rowspan="2" style="text-align:left">Наименование сырья и полуфабрикатов</th>
+            <th colspan="3">Расход сырья и п/ф на 1 порцию, г</th>
+            <th colspan="3">Расход сырья и п/ф на 10 порций, г</th>
+          </tr>
+          <tr>
+            <th>Брутто</th><th>Нетто</th><th>Выход</th>
+            <th>Брутто</th><th>Нетто</th><th>Выход</th>
+          </tr>
+        </thead>
+        <tbody>${ingRows10}</tbody>
+      </table>
+      <div class="doc-footer-row" style="margin-top:0.75rem">
+        <span><strong>Масса полуфабриката: ${calc.totalNetto.toFixed(0)} г</strong></span>
+        <span><strong>Выход на 1 порцию: ${yieldVal}</strong></span>
+        <span><strong>Выход на 10 порций: ${recipe.yield_per_portion ? recipe.yield_per_portion * 10 : (calc.totalNetto * 10).toFixed(0)} г</strong></span>
+      </div>
+    </div>
+
+    <div class="doc-section" style="margin-top:1rem">
+      <p class="doc-text" style="font-style:italic"><strong>Информация о пищевой ценности:</strong> ${pv}</p>
+    </div>
+
+    <div class="doc-section">
+      <div class="doc-section-title">Технологический процесс изготовления, оформления и подачи блюда (изделия), условия и сроки реализации</div>
+      <p class="doc-text">${techProcess.replace(/\n/g, '</p><p class="doc-text" style="margin-top:0.5rem">')}</p>
+      <p class="doc-text" style="margin-top:0.75rem">Допустимые сроки хранения блюда (изделия) — ${storage}.</p>
+    </div>
+
+    <div class="doc-sign-block">
+      <div class="sign-line"><span class="sign-role">Бухгалтер</span><div class="sign-underline"></div></div>
+      <div class="sign-line"><span class="sign-role">Шеф-повар</span><div class="sign-underline"></div></div>
+      <div class="sign-line" style="margin-top:1rem"><span class="sign-role">Ответственный за оформление ТТК</span><div class="sign-underline"></div></div>
+      <div class="sign-line" style="margin-top:1rem"><span class="sign-role">Дата</span><div class="sign-underline"></div></div>
+    </div>
+
+    <div class="gost-note">Документ подготовлен в соответствии с ГОСТ Р 31987-2012</div>
+  </div>`;
+}
+
+// ── LOCAL KK (Калькуляционная карта) ──
+function buildKK(recipe, calc) {
+  const today = new Date().toLocaleDateString('ru-RU');
+  const rows = calc.rows.map((ing, i) => {
+    const cost = ((parseFloat(ing.netto)||0) / 1000) * (parseFloat(ing.price_per_kg)||0);
+    return `<tr>
+      <td>${i+1}</td>
+      <td>${ing.name}</td>
+      <td class="num">${parseFloat(ing.netto).toFixed(1)}</td>
+      <td class="num">${(parseFloat(ing.price_per_kg)||0).toFixed(2)}</td>
+      <td class="num">${cost.toFixed(2)}</td>
+    </tr>`;
+  }).join('');
+
+  return `<div class="doc-content">
+    <div class="doc-header-block">
+      <div class="doc-stamp">Утверждаю:</div>
+      <div class="doc-stamp">Руководитель <span class="doc-sign-line"></span></div>
+    </div>
+    <div class="doc-title">КАЛЬКУЛЯЦИОННАЯ КАРТА № ${recipe.card_number || '—'}</div>
+    <div class="doc-subtitle">${recipe.dish_name}</div>
+    <div style="text-align:center; font-size:0.8rem; color:var(--muted); margin-bottom:1.5rem;">Дата составления: ${recipe.date || today}</div>
+
+    <div class="doc-section">
+      <table class="doc-table">
+        <thead>
+          <tr>
+            <th style="width:40px">№</th>
+            <th style="text-align:left">Наименование сырья</th>
+            <th>Нетто, г</th>
+            <th>Цена за кг, ₽</th>
+            <th>Стоимость, ₽</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows}
+          <tr>
+            <td colspan="2" class="total-row" style="text-align:right; font-weight:700;">ИТОГО себестоимость:</td>
+            <td class="num total-row">${calc.totalNetto.toFixed(1)}</td>
+            <td class="num total-row">—</td>
+            <td class="num total-row" style="color:var(--rust); font-size:0.9rem;">${calc.totalCost.toFixed(2)} ₽</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="doc-section" style="margin-top:1.5rem;">
+      <div class="doc-section-title">Расчёт на разное количество порций</div>
+      <table class="doc-table">
+        <thead>
+          <tr>
+            <th style="text-align:left">Ингредиент</th>
+            <th>1 порция, г</th>
+            <th>10 порций, г</th>
+            <th>100 порций, г</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${calc.rows.map(ing => `<tr>
+            <td style="text-align:left">${ing.name}</td>
+            <td class="num">${parseFloat(ing.netto).toFixed(1)}</td>
+            <td class="num">${(parseFloat(ing.netto)*10).toFixed(0)}</td>
+            <td class="num">${(parseFloat(ing.netto)*100).toFixed(0)}</td>
+          </tr>`).join('')}
+          <tr>
+            <td class="total-row" style="text-align:right; font-weight:700;">ИТОГО нетто:</td>
+            <td class="num total-row">${calc.totalNetto.toFixed(1)}</td>
+            <td class="num total-row">${(calc.totalNetto*10).toFixed(0)}</td>
+            <td class="num total-row">${(calc.totalNetto*100).toFixed(0)}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="doc-sign-block">
+      <div class="sign-line"><span class="sign-role">Бухгалтер</span><div class="sign-underline"></div></div>
+      <div class="sign-line"><span class="sign-role">Шеф-повар</span><div class="sign-underline"></div></div>
+    </div>
+    <div class="gost-note">Документ составлен в соответствии с требованиями ГОСТ Р 31987-2012</div>
+  </div>`;
+}
+
+// ── LOCAL PV (Пищевая ценность) ──
+function buildPV(recipe, calc) {
+  const cal  = calc.totalCal.toFixed(0);
+  const prot = calc.totalProt.toFixed(1);
+  const fat  = calc.totalFat.toFixed(1);
+  const carb = calc.totalCarb.toFixed(1);
+  const kj   = (calc.totalCal * 4.184).toFixed(0);
+
+  const rows = calc.rows.map((ing, i) => {
+    const n = parseFloat(ing.netto) || 0;
+    return `<tr>
+      <td>${i+1}</td>
+      <td style="text-align:left">${ing.name}</td>
+      <td class="num">${n.toFixed(1)}</td>
+      <td class="num">${(((ing.calories||0)*n/100)).toFixed(1)}</td>
+      <td class="num">${(((ing.protein||0)*n/100)).toFixed(2)}</td>
+      <td class="num">${(((ing.fat||0)*n/100)).toFixed(2)}</td>
+      <td class="num">${(((ing.carbs||0)*n/100)).toFixed(2)}</td>
+    </tr>`;
+  }).join('');
+
+  return `<div class="doc-content">
+    <div class="doc-title">ПИЩЕВАЯ ЦЕННОСТЬ БЛЮДА</div>
+    <div class="doc-subtitle">${recipe.dish_name}</div>
+    <div style="text-align:center; font-size:0.8rem; color:var(--muted); margin-bottom:1.5rem;">Расчёт на 1 порцию (выход ${recipe.yield_per_portion || '—'} г)</div>
+
+    <div class="nutrition-grid">
+      <div class="nutrition-card">
+        <div class="nutrition-value">${cal}</div>
+        <div class="nutrition-unit">ккал / ${kj} кДж</div>
+        <div class="nutrition-label">Калорийность</div>
+      </div>
+      <div class="nutrition-card">
+        <div class="nutrition-value">${prot}</div>
+        <div class="nutrition-unit">г</div>
+        <div class="nutrition-label">Белки</div>
+      </div>
+      <div class="nutrition-card">
+        <div class="nutrition-value">${fat}</div>
+        <div class="nutrition-unit">г</div>
+        <div class="nutrition-label">Жиры</div>
+      </div>
+      <div class="nutrition-card">
+        <div class="nutrition-value">${carb}</div>
+        <div class="nutrition-unit">г</div>
+        <div class="nutrition-label">Углеводы</div>
+      </div>
+    </div>
+
+    <div class="doc-section" style="margin-top:2rem;">
+      <div class="doc-section-title">Детализация по ингредиентам</div>
+      <table class="doc-table">
+        <thead>
+          <tr>
+            <th style="width:35px">№</th>
+            <th style="text-align:left">Ингредиент</th>
+            <th>Нетто, г</th>
+            <th>Ккал</th>
+            <th>Белки, г</th>
+            <th>Жиры, г</th>
+            <th>Углеводы, г</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows}
+          <tr>
+            <td colspan="2" class="total-row" style="text-align:right; font-weight:700;">ИТОГО на порцию:</td>
+            <td class="num total-row">${calc.totalNetto.toFixed(1)}</td>
+            <td class="num total-row" style="color:var(--rust); font-weight:700;">${cal}</td>
+            <td class="num total-row">${prot}</td>
+            <td class="num total-row">${fat}</td>
+            <td class="num total-row">${carb}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div style="margin-top:1.5rem; padding:1rem; background:var(--cream); border:1px solid var(--border); border-radius:4px; font-size:0.8rem; line-height:1.7; color:var(--muted);">
+      <strong style="color:var(--ink);">Примечание.</strong> Пищевая ценность рассчитана по справочным данным на 100 г сырья в соответствии с «Таблицами химического состава и калорийности российских продуктов питания» (Скурихин, Тутельян, 2007). Фактическая пищевая ценность может незначительно отличаться в зависимости от партии сырья и технологических потерь при тепловой обработке.
+    </div>
+
+    <div class="gost-note">Документ составлен в соответствии с требованиями ГОСТ Р 31987-2012</div>
+  </div>`;
+}
+
+// ── PRINT / PDF ──
+function printDoc() { window.print(); }
+
+function savePDF() {
+  const content = document.getElementById('docContent').innerHTML;
+  const w = window.open('', '_blank');
+  w.document.write(`<!DOCTYPE html><html><head>
+    <meta charset="UTF-8">
+    <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Source+Serif+4:wght@300;400;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+      :root{--ink:#1a1208;--paper:#faf7f2;--cream:#f2ede4;--gold:#b8860b;--gold-light:#d4a017;--rust:#8b3a0f;--sage:#5a6e4a;--border:#d4c9b4;--muted:#7a6e5e;}
+      *{box-sizing:border-box;margin:0;padding:0;}
+      body{font-family:'Source Serif 4',Georgia,serif;background:white;color:var(--ink);padding:2cm;}
+      .doc-content{max-width:100%;}
+      .doc-header-block{text-align:right;margin-bottom:2rem;padding-bottom:1rem;border-bottom:1px solid var(--border);}
+      .doc-stamp{font-size:0.85rem;color:var(--muted);margin-bottom:.25rem;}
+      .doc-sign-line{display:inline-block;width:200px;border-bottom:1px solid var(--ink);margin-left:1rem;vertical-align:middle;}
+      .doc-title{font-family:'Playfair Display',serif;font-size:1.4rem;font-weight:700;text-align:center;margin-bottom:.4rem;}
+      .doc-subtitle{font-family:'Playfair Display',serif;font-size:1.1rem;font-weight:600;text-align:center;margin-bottom:2rem;font-style:italic;}
+      .doc-section{margin-bottom:1.8rem;}
+      .doc-section-title{font-family:'Playfair Display',serif;font-size:1rem;font-weight:700;margin-bottom:.75rem;text-align:center;text-transform:uppercase;letter-spacing:.04em;}
+      .doc-text{font-size:.9rem;line-height:1.75;text-align:justify;}
+      .doc-table{width:100%;border-collapse:collapse;font-size:.82rem;margin-bottom:.5rem;}
+      .doc-table th{background:var(--ink);color:white;padding:8px 10px;text-align:center;font-size:.78rem;border:1px solid var(--ink);}
+      .doc-table td{padding:7px 10px;border:1px solid var(--border);vertical-align:middle;}
+      .doc-table tr:nth-child(even) td{background:#faf7f0;}
+      .doc-table td:first-child{text-align:center;color:var(--muted);font-size:.75rem;}
+      .doc-table td.num{text-align:right;font-family:'JetBrains Mono',monospace;font-size:.8rem;}
+      .doc-table td.total-row{font-weight:600;background:#f0ebe0!important;}
+      .doc-footer-row{display:flex;justify-content:space-between;margin-top:.5rem;font-size:.85rem;font-weight:600;}
+      .doc-sign-block{margin-top:2.5rem;display:grid;grid-template-columns:1fr 1fr;gap:1rem;}
+      .sign-line{display:flex;flex-direction:column;gap:.2rem;}
+      .sign-role{font-size:.8rem;color:var(--muted);}
+      .sign-underline{border-bottom:1px solid var(--border);height:24px;}
+      .nutrition-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:1rem;margin-top:.75rem;}
+      .nutrition-card{background:var(--cream);border:1px solid var(--border);border-radius:6px;padding:.75rem;text-align:center;}
+      .nutrition-value{font-family:'Playfair Display',serif;font-size:1.5rem;font-weight:700;color:var(--rust);}
+      .nutrition-unit{font-size:.7rem;color:var(--muted);}
+      .nutrition-label{font-size:.75rem;margin-top:.2rem;}
+      .gost-note{font-family:'JetBrains Mono',monospace;font-size:.6rem;color:var(--muted);text-align:center;margin-top:2rem;padding-top:1rem;border-top:1px solid var(--border);}
+    </style>
+  </head><body>${content}<script>window.onload=()=>{window.print();}<\/script></body></html>`);
+  w.document.close();
+}
+
+// ── HELPERS ──
+function showError(msg) {
+  const b = document.getElementById('errorBox');
+  b.textContent = msg;
+  b.style.display = 'block';
+}
+
+// ── AUTOLOAD FROM CALCULATOR ──
+window.addEventListener('DOMContentLoaded', () => {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('autoload') === '1') {
+    try {
+      const stored = sessionStorage.getItem('ttk_json');
+      if (stored) {
+        document.getElementById('jsonInput').value = stored;
+        // Auto-generate after short delay to let page settle
+        setTimeout(() => generate(), 300);
+      }
+    } catch(e) {}
+  }
+});
+</script>
+</body>
+</html>
