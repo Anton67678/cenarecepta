@@ -297,7 +297,7 @@ async def cmd_recipe(message: types.Message):
         await message.answer('Напиши номер: /recipe 1')
         return
     try:
-        num = int(args[1]) - 1
+        num = int(args[1]) - 1   # переводим в 0-based
     except ValueError:
         await message.answer('Напиши число: /recipe 1')
         return
@@ -307,15 +307,19 @@ async def cmd_recipe(message: types.Message):
         await message.answer(f'Рецептур пока нет. {SITE_URL}')
         return
 
-    items = _flatten_recipes(raw)
-    if num < 0 or num >= len(items):
-        await message.answer(f'Рецептура #{num+1} не найдена. У тебя {len(items)} рецептур.')
+    # Используем ту же функцию и ту же сортировку что в /recipes
+    all_recipes = _flatten_recipes(raw)
+
+    if num < 0 or num >= len(all_recipes):
+        await message.answer(
+            f'Рецептура #{num + 1} не найдена.\n'
+            f'У тебя {len(all_recipes)} рецептур — напиши /recipes чтобы увидеть список.'
+        )
         return
 
-    _, recipe = items[num]
-    text = format_recipe(recipe)
+    recipe = all_recipes[num]
+    text   = format_recipe(recipe)
 
-    # Разбиваем длинное сообщение
     if len(text) > 4000:
         for chunk in [text[i:i+4000] for i in range(0, len(text), 4000)]:
             await message.answer(chunk, parse_mode='HTML')
