@@ -1,0 +1,1068 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Кондитерский калькулятор — PYRA</title>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,300;1,400&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+import { getDatabase, ref, push, set } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
+import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyCEWWRUKpJ2tJdsUkTfMTKTH7Lfmc9dZs0",
+  authDomain: "cenarecepta-calc.firebaseapp.com",
+  databaseURL: "https://cenarecepta-calc-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId: "cenarecepta-calc",
+  storageBucket: "cenarecepta-calc.firebasestorage.app",
+  messagingSenderId: "72447381131",
+  appId: "1:72447381131:web:dee8cf51dd3af8133d4e8e"
+};
+
+const app = initializeApp(firebaseConfig);
+const db  = getDatabase(app);
+const auth = getAuth(app);
+signInAnonymously(auth).catch(console.error);
+
+window._firebaseSet  = set;
+window._firebasePush = push;
+window._firebaseRef  = (path) => ref(db, path);
+</script>
+
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+
+:root{
+  --bg:#0f0e0b;--paper:#1a1812;--card:#201e18;--border:#2e2b22;
+  --gold:#c8a84b;--gold2:#e8cc78;--gold3:#f5e4a8;
+  --cream:#e8dfc8;--muted:#7a7260;--red:#c0504a;--green:#5a8c64;
+  --text:#d4cbb8;
+  --serif:'Cormorant Garamond',Georgia,serif;
+  --mono:'DM Mono',monospace;
+}
+:root.light{
+  --bg:#f5f0e8;--paper:#ede7d9;--card:#e8e1d0;--border:#cfc6b0;
+  --gold:#9a7830;--gold2:#7a5e1e;--gold3:#5a4210;
+  --cream:#2c2410;--muted:#8a7f6a;--red:#b03030;--green:#3a6e44;--text:#3a3220;
+}
+
+body{background:var(--bg);color:var(--text);font-family:var(--serif);min-height:100vh;padding-bottom:80px;transition:background .3s,color .3s}
+
+/* HEADER */
+header{text-align:center;padding:50px 24px 32px;border-bottom:1px solid var(--border);position:relative}
+header::before{content:'';position:absolute;inset:0;background:radial-gradient(ellipse 60% 80% at 50% 0%,rgba(200,168,75,.07) 0%,transparent 70%);pointer-events:none}
+.logo-line{display:flex;align-items:center;justify-content:center;gap:16px;margin-bottom:8px}
+.logo-diamond{width:7px;height:7px;background:var(--gold);transform:rotate(45deg);flex-shrink:0}
+h1{font-size:clamp(22px,4vw,42px);font-weight:300;letter-spacing:.06em;color:var(--gold2);line-height:1}
+.subtitle{font-size:11px;font-family:var(--mono);letter-spacing:.2em;color:var(--muted);text-transform:uppercase;margin-top:6px}
+.gost-badge{display:inline-block;margin-top:10px;font-family:var(--mono);font-size:10px;letter-spacing:.12em;color:var(--gold);border:1px solid rgba(200,168,75,.3);padding:3px 10px;border-radius:2px}
+
+/* NAV */
+.top-nav{display:flex;justify-content:center;gap:8px;padding:16px 24px;border-bottom:1px solid var(--border);flex-wrap:wrap}
+.nav-link{font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);text-decoration:none;padding:5px 12px;border:1px solid transparent;border-radius:2px;transition:all .15s}
+.nav-link:hover{color:var(--gold);border-color:rgba(200,168,75,.3)}
+.nav-link.active{color:var(--gold2);border-color:var(--gold)}
+
+/* LAYOUT */
+.main{max-width:980px;margin:0 auto;padding:36px 20px 0;display:flex;flex-direction:column;gap:24px}
+
+/* SECTION */
+.section{background:var(--card);border:1px solid var(--border);border-radius:2px;overflow:hidden}
+.section-header{display:flex;align-items:center;gap:12px;padding:14px 20px;border-bottom:1px solid var(--border);background:var(--paper);cursor:pointer;user-select:none}
+.section-header:hover{background:var(--bg)}
+.section-header.no-toggle{cursor:default}
+.section-header.no-toggle:hover{background:var(--paper)}
+.sec-num{font-family:var(--mono);font-size:10px;color:var(--gold);letter-spacing:.1em;width:28px;flex-shrink:0}
+.sec-title{font-size:15px;font-weight:400;color:var(--cream);flex:1;letter-spacing:.03em}
+.sec-total{font-family:var(--mono);font-size:13px;color:var(--gold2);min-width:90px;text-align:right}
+.chevron{color:var(--muted);font-size:11px;transition:transform .2s;margin-left:6px}
+.section.collapsed .chevron{transform:rotate(-90deg)}
+.section-body{padding:20px}
+.section.collapsed .section-body{display:none}
+
+/* FIELDS */
+.field-row{display:grid;grid-template-columns:1fr 180px;gap:10px;align-items:center;margin-bottom:12px}
+.field-label{font-size:14px;color:var(--text)}
+.field-hint{font-size:11px;font-family:var(--mono);color:var(--muted);margin-top:2px}
+
+input[type=text],input[type=number],select{
+  width:100%;background:var(--bg);border:1px solid var(--border);border-radius:1px;
+  color:var(--text);font-family:var(--mono);font-size:13px;padding:7px 10px;
+  outline:none;transition:border-color .15s;-moz-appearance:textfield
+}
+input[type=number]::-webkit-inner-spin-button,
+input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none}
+input:focus,select:focus{border-color:var(--gold);color:var(--cream)}
+input::placeholder{color:var(--muted);font-size:11px}
+select option{background:var(--card)}
+
+/* INFO BLOCK */
+.info-block{background:var(--paper);border:1px solid var(--border);border-left:3px solid var(--gold);padding:10px 14px;font-size:12px;font-family:var(--mono);color:var(--muted);line-height:1.6;border-radius:0 2px 2px 0;margin-bottom:14px}
+
+/* ING TABLE */
+.table-wrap{overflow-x:auto}
+.ing-head,.ing-row{
+  display:grid;gap:5px;align-items:center;
+  grid-template-columns:2fr 75px 70px 75px 70px 75px 95px 32px
+}
+.ing-head{padding-bottom:8px;border-bottom:1px solid var(--border);margin-bottom:8px}
+.ing-head span{font-family:var(--mono);font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);text-align:center}
+.ing-head span:first-child{text-align:left}
+.ing-row{margin-bottom:5px}
+
+/* EXP TABLE */
+.exp-head,.exp-row{
+  display:grid;gap:5px;align-items:center;
+  grid-template-columns:2fr 110px 110px 90px 32px
+}
+.exp-head{padding-bottom:8px;border-bottom:1px solid var(--border);margin-bottom:8px}
+.exp-head span{font-family:var(--mono);font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);text-align:center}
+.exp-head span:first-child{text-align:left}
+.exp-row{margin-bottom:5px}
+
+/* SUGGEST */
+.name-wrap{position:relative}
+.suggest-list{position:absolute;top:100%;left:0;right:0;background:var(--card);border:1px solid var(--gold);border-top:none;z-index:200;max-height:180px;overflow-y:auto;display:none;border-radius:0 0 2px 2px}
+.suggest-item{padding:6px 10px;font-family:var(--mono);font-size:11px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;color:var(--text);transition:background .1s}
+.suggest-item:hover{background:var(--paper);color:var(--gold)}
+.suggest-item .si-loss{color:var(--muted);font-size:10px}
+
+/* READONLY CELL */
+.ro-cell{font-family:var(--mono);font-size:12px;color:var(--gold);text-align:center;padding:7px 4px;background:var(--paper);border:1px solid var(--border);border-radius:1px}
+.ro-cell.yield{color:var(--gold2)}
+
+/* BUTTONS */
+.btn-add{margin-top:10px;background:none;border:1px dashed var(--border);color:var(--muted);font-family:var(--mono);font-size:11px;letter-spacing:.1em;padding:7px 14px;cursor:pointer;transition:all .15s;border-radius:1px}
+.btn-add:hover{border-color:var(--gold);color:var(--gold)}
+.btn-del{background:none;border:none;color:var(--muted);cursor:pointer;font-size:16px;padding:2px 4px;transition:color .15s;line-height:1}
+.btn-del:hover{color:var(--red)}
+
+.calc-btn{width:100%;background:var(--gold);color:#0f0e0b;border:none;padding:15px;font-family:var(--mono);font-size:12px;letter-spacing:.18em;text-transform:uppercase;cursor:pointer;border-radius:1px;transition:background .15s,transform .1s;margin-top:8px}
+.calc-btn:hover{background:var(--gold2)}
+.calc-btn:active{transform:scale(.99)}
+.btn-outline{background:transparent;color:var(--gold);border:1px solid var(--gold);padding:10px 18px;font-family:var(--mono);font-size:11px;letter-spacing:.15em;text-transform:uppercase;cursor:pointer;border-radius:1px;transition:all .2s}
+.btn-outline:hover{background:rgba(200,168,75,.1);color:var(--gold2)}
+
+/* MARKUP SLIDER */
+.markup-wrap{display:flex;align-items:center;gap:12px;margin-top:6px}
+input[type=range]{flex:1;-webkit-appearance:none;height:2px;background:var(--border);outline:none;border-radius:2px}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;height:15px;background:var(--gold);border-radius:50%;cursor:pointer}
+.markup-val{font-family:var(--mono);font-size:15px;color:var(--gold2);min-width:52px;text-align:right}
+
+/* RESULT */
+.result-card{background:linear-gradient(135deg,#1e1a0e 0%,#16140c 100%);border:1px solid var(--gold);border-radius:2px;padding:28px;position:relative;overflow:hidden}
+.result-card::before{content:'';position:absolute;inset:0;background:radial-gradient(ellipse 80% 60% at 50% 0%,rgba(200,168,75,.06) 0%,transparent 70%);pointer-events:none}
+.result-title{font-family:var(--mono);font-size:9px;letter-spacing:.3em;text-transform:uppercase;color:var(--muted);text-align:center;margin-bottom:24px}
+.result-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--border);border:1px solid var(--border);margin-bottom:20px}
+.result-cell{background:var(--card);padding:14px 16px}
+.rc-label{font-size:10px;font-family:var(--mono);color:var(--muted);letter-spacing:.08em;margin-bottom:5px}
+.rc-value{font-family:var(--mono);font-size:18px;color:var(--gold2)}
+.rc-value.accent{color:var(--gold3)}
+
+/* BREAKDOWN */
+.breakdown{margin-top:16px;padding-top:16px;border-top:1px solid var(--border)}
+.bd-row{display:flex;justify-content:space-between;align-items:baseline;padding:4px 0;font-size:13px}
+.bd-row .n{color:var(--muted)}
+.bd-row .v{font-family:var(--mono);color:var(--text)}
+.bd-row.total{border-top:1px solid var(--border);margin-top:6px;padding-top:8px}
+.bd-row.total .n{color:var(--cream)}
+.bd-row.total .v{color:var(--gold2);font-size:15px}
+.bd-row.price-row{border-top:1px solid var(--gold);margin-top:4px}
+.bd-row.price-row .n{color:var(--gold2)}
+.bd-row.price-row .v{color:var(--gold3);font-size:16px}
+
+/* WASTE */
+.waste-block{margin-top:18px;padding:14px 16px;background:rgba(192,80,74,.06);border:1px solid rgba(192,80,74,.2);border-radius:2px}
+.waste-title{font-family:var(--mono);font-size:9px;letter-spacing:.2em;text-transform:uppercase;color:var(--red);margin-bottom:10px}
+.waste-row{display:flex;justify-content:space-between;font-size:12px;padding:3px 0}
+.waste-row .wn{color:var(--muted)}
+.waste-row .wv{font-family:var(--mono);color:var(--red)}
+.waste-total{margin-top:8px;padding-top:8px;border-top:1px solid rgba(192,80,74,.25);display:flex;justify-content:space-between;font-size:13px}
+.waste-total .wn{color:var(--cream)}
+.waste-total .wv{font-family:var(--mono);color:var(--red);font-size:15px}
+
+/* JSON */
+.json-block{background:var(--bg);border:1px solid var(--border);border-radius:2px;padding:14px;font-family:var(--mono);font-size:11px;color:var(--muted);line-height:1.6;max-height:280px;overflow-y:auto;white-space:pre-wrap;word-break:break-all}
+.json-actions{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+.json-btn{background:none;border:1px solid var(--border);color:var(--muted);font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;padding:7px 14px;cursor:pointer;border-radius:1px;transition:all .15s}
+.json-btn:hover{border-color:var(--gold);color:var(--gold)}
+.json-btn.success{border-color:var(--green);color:var(--green)}
+
+/* SEP */
+hr.sep{border:none;border-top:1px solid var(--border);margin:14px 0}
+
+/* THEME */
+.theme-toggle{position:fixed;top:18px;right:18px;z-index:100;background:var(--card);border:1px solid var(--border);border-radius:40px;padding:4px;display:flex;align-items:center;gap:2px;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.2)}
+.theme-btn{width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:15px;user-select:none;transition:background .2s}
+.theme-btn.active{background:var(--gold)}
+.theme-btn:not(.active){opacity:.4}
+
+/* FOOTER */
+.footer{text-align:center;padding:48px 24px 0;font-family:var(--mono);font-size:10px;letter-spacing:.18em;color:var(--muted);text-transform:uppercase}
+.footer-brand{font-size:13px;color:var(--gold);letter-spacing:.3em;margin-bottom:4px}
+.footer a{color:var(--muted);text-decoration:none;transition:color .15s}
+.footer a:hover{color:var(--gold)}
+
+@media(max-width:680px){
+  .result-grid{grid-template-columns:1fr 1fr}
+  .ing-head,.ing-row{grid-template-columns:1.6fr 65px 55px 65px 90px 32px}
+  .ing-head span:nth-child(4),.ing-row>*:nth-child(4),
+  .ing-head span:nth-child(5),.ing-row>*:nth-child(5){display:none}
+}
+</style>
+</head>
+<body>
+
+<div class="theme-toggle" onclick="toggleTheme()">
+  <div class="theme-btn active" id="btn-dark">🌙</div>
+  <div class="theme-btn" id="btn-light">☀️</div>
+</div>
+
+<header>
+  <div class="logo-line">
+    <div class="logo-diamond"></div>
+    <h1>Кондитерский калькулятор</h1>
+    <div class="logo-diamond"></div>
+  </div>
+  <p class="subtitle">Себестоимость · Брутто / Нетто · Отходы · Наценка</p>
+  <div class="gost-badge">Кондитерское производство</div>
+</header>
+
+<nav class="top-nav">
+  <a href="bakery-calc.html"   class="nav-link active">◆ Кондитерский</a>
+  <a href="catering-calc.html" class="nav-link">◇ Общепит</a>
+  <a href="ttk-generator.html" class="nav-link">◇ Генератор ТТК</a>
+</nav>
+
+<div class="main">
+
+  <!-- 0. РЕКВИЗИТЫ -->
+  <div class="section" id="sec-org">
+    <div class="section-header" onclick="toggleSec('sec-org')">
+      <span class="sec-num">✦</span>
+      <span class="sec-title">Реквизиты и карта изделия</span>
+      <span class="chevron">▾</span>
+    </div>
+    <div class="section-body">
+      <div class="field-row">
+        <div><div class="field-label">Наименование предприятия / ИП</div></div>
+        <input type="text" id="org-name" placeholder="ИП Иванова А.С." oninput="calc()">
+      </div>
+      <div class="field-row">
+        <div><div class="field-label">Название изделия</div></div>
+        <input type="text" id="product-name" placeholder="Торт «Медовик»" oninput="calc()">
+      </div>
+      <div class="field-row">
+        <div><div class="field-label">Группа изделий</div><div class="field-hint">Торты, пирожные, печенье…</div></div>
+        <input type="text" id="product-group" placeholder="Торты" oninput="calc()">
+      </div>
+      <div class="field-row">
+        <div><div class="field-label">Номер карты</div></div>
+        <input type="text" id="card-number" placeholder="К-001" oninput="calc()">
+      </div>
+      <div class="field-row">
+        <div><div class="field-label">Дата составления</div></div>
+        <input type="text" id="doc-date" placeholder="дд.мм.гггг" oninput="calc()">
+      </div>
+      <div class="field-row">
+        <div><div class="field-label">Способ приготовления</div></div>
+        <select id="cooking-method" onchange="calc()">
+          <option value="выпечка">Выпечка</option>
+          <option value="варка">Варка (крем, сироп)</option>
+          <option value="без выпечки">Без выпечки (холодный)</option>
+          <option value="заморозка">Заморозка / муссовый</option>
+          <option value="жарка">Жарка (пончики, чак-чак)</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <!-- 1. ВЫХОД -->
+  <div class="section" id="sec-yield">
+    <div class="section-header" onclick="toggleSec('sec-yield')">
+      <span class="sec-num">00</span>
+      <span class="sec-title">Выход изделия</span>
+      <span class="sec-total" id="tot-yield">—</span>
+      <span class="chevron">▾</span>
+    </div>
+    <div class="section-body">
+      <div class="info-block">
+        Введите вес готового изделия из одного замеса и количество штук. Система пересчитает себестоимость на штуку и на 1 кг.
+      </div>
+      <div class="field-row">
+        <div><div class="field-label">Вес готового изделия из замеса, г</div><div class="field-hint">Взвесьте финальный продукт</div></div>
+        <input type="number" id="batch-weight" value="2000" min="1" oninput="calc()">
+      </div>
+      <div class="field-row">
+        <div><div class="field-label">Количество штук из замеса</div><div class="field-hint">Торты / пирожные / печенье</div></div>
+        <input type="number" id="units-count" value="1" min="1" oninput="onUnitsChange()">
+      </div>
+      <div class="field-row">
+        <div><div class="field-label">Вес одной штуки, г</div><div class="field-hint">Рассчитывается автоматически</div></div>
+        <input type="number" id="unit-weight" placeholder="авто" step="0.1" oninput="onUnitWeightChange()">
+      </div>
+      <div style="font-family:var(--mono);font-size:12px;color:var(--gold);margin-top:4px" id="yield-hint"></div>
+    </div>
+  </div>
+
+  <!-- 2. ИНГРЕДИЕНТЫ -->
+  <div class="section" id="sec-ing">
+    <div class="section-header" onclick="toggleSec('sec-ing')">
+      <span class="sec-num">01</span>
+      <span class="sec-title">Ингредиенты (на весь замес)</span>
+      <span class="sec-total" id="tot-ing">0.00 ₽</span>
+      <span class="chevron">▾</span>
+    </div>
+    <div class="section-body">
+      <div class="info-block">
+        Брутто — вес со склада. После холодной обработки (очистка, мойка) = Нетто. После тепловой = Выход.
+        <span style="color:var(--red)">Отходы = Брутто − Нетто — идут в акт списания.</span>
+      </div>
+      <div class="table-wrap">
+        <div class="ing-head">
+          <span>Ингредиент</span>
+          <span>Брутто, г</span>
+          <span>% хол.</span>
+          <span>Нетто, г</span>
+          <span>% теп.</span>
+          <span>Выход, г</span>
+          <span>Цена ₽/кг</span>
+          <span></span>
+        </div>
+        <div id="ing-rows"></div>
+      </div>
+      <button class="btn-add" onclick="addIng()">+ Добавить ингредиент</button>
+    </div>
+  </div>
+
+  <!-- 3. РАСХОДНИКИ -->
+  <div class="section" id="sec-exp">
+    <div class="section-header" onclick="toggleSec('sec-exp')">
+      <span class="sec-num">02</span>
+      <span class="sec-title">Расходники и упаковка</span>
+      <span class="sec-total" id="tot-exp">0.00 ₽</span>
+      <span class="chevron">▾</span>
+    </div>
+    <div class="section-body">
+      <div class="info-block">
+        Подложки, коробки, пакеты, этикетки, одноразовая посуда. Вводите стоимость за единицу.
+      </div>
+      <div class="table-wrap">
+        <div class="exp-head">
+          <span>Расходник</span>
+          <span>Количество</span>
+          <span>Цена / ед, ₽</span>
+          <span>Сумма, ₽</span>
+          <span></span>
+        </div>
+        <div id="exp-rows"></div>
+      </div>
+      <button class="btn-add" onclick="addExp()">+ Добавить расходник</button>
+    </div>
+  </div>
+
+  <!-- 4. КОСВЕННЫЕ -->
+  <div class="section" id="sec-overhead">
+    <div class="section-header" onclick="toggleSec('sec-overhead')">
+      <span class="sec-num">03</span>
+      <span class="sec-title">Косвенные затраты</span>
+      <span class="sec-total" id="tot-overhead">0.00 ₽</span>
+      <span class="chevron">▾</span>
+    </div>
+    <div class="section-body">
+      <div class="field-row">
+        <div><div class="field-label">Ставка кондитера, ₽/час</div></div>
+        <input type="number" id="ov-labor-rate" placeholder="300" oninput="calc()">
+      </div>
+      <div class="field-row">
+        <div><div class="field-label">Время приготовления замеса, мин</div></div>
+        <input type="number" id="ov-labor-time" placeholder="120" oninput="calc()">
+      </div>
+      <hr class="sep">
+      <div class="field-row">
+        <div><div class="field-label">Стоимость оборудования, ₽</div></div>
+        <input type="number" id="ov-equip-cost" placeholder="0" oninput="calc()">
+      </div>
+      <div class="field-row">
+        <div><div class="field-label">Срок службы оборудования, лет</div></div>
+        <input type="number" id="ov-equip-life" value="5" min="1" oninput="calc()">
+      </div>
+      <div class="field-row">
+        <div><div class="field-label">Замесов в месяц</div></div>
+        <input type="number" id="ov-batches-month" value="30" min="1" oninput="calc()">
+      </div>
+      <hr class="sep">
+      <div class="field-row">
+        <div><div class="field-label">Электроэнергия в месяц, ₽</div></div>
+        <input type="number" id="ov-util" placeholder="0" oninput="calc()">
+      </div>
+      <div class="field-row">
+        <div><div class="field-label">Аренда (доля кухни) в месяц, ₽</div></div>
+        <input type="number" id="ov-rent" placeholder="0" oninput="calc()">
+      </div>
+      <div class="field-row">
+        <div><div class="field-label">Прочие затраты в месяц, ₽</div></div>
+        <input type="number" id="ov-other" placeholder="0" oninput="calc()">
+      </div>
+    </div>
+  </div>
+
+  <!-- 5. НАЦЕНКА -->
+  <div class="section" id="sec-markup">
+    <div class="section-header" onclick="toggleSec('sec-markup')">
+      <span class="sec-num">04</span>
+      <span class="sec-title">Наценка и НДС</span>
+      <span class="sec-total" id="tot-markup">×1.0</span>
+      <span class="chevron">▾</span>
+    </div>
+    <div class="section-body">
+      <div class="field-label" style="margin-bottom:10px">Наценка на себестоимость, %</div>
+      <div class="markup-wrap">
+        <input type="range" id="markup-range" min="0" max="500" value="100" oninput="syncMarkup(this.value)">
+        <span class="markup-val" id="markup-display">100%</span>
+      </div>
+      <div style="margin-top:10px;display:flex;gap:10px;align-items:center">
+        <span style="font-size:13px;color:var(--muted)">Вручную:</span>
+        <input type="number" id="markup-input" value="100" min="0" style="width:80px" oninput="syncMarkupInput(this.value)">
+        <span style="color:var(--muted)">%</span>
+      </div>
+      <hr class="sep">
+      <div class="field-row">
+        <div><div class="field-label">НДС, %</div><div class="field-hint">0%, 10% или 20%</div></div>
+        <input type="number" id="vat-pct" value="0" placeholder="0" oninput="calc()">
+      </div>
+    </div>
+  </div>
+
+  <!-- РЕЗУЛЬТАТ -->
+  <div class="result-card">
+    <div class="result-title">◆ Результат расчёта ◆</div>
+    <div class="result-grid">
+      <div class="result-cell">
+        <div class="rc-label">СЕБЕСТ. / КГ</div>
+        <div class="rc-value" id="r-cost-kg">—</div>
+      </div>
+      <div class="result-cell">
+        <div class="rc-label">СЕБЕСТ. / ШТ</div>
+        <div class="rc-value" id="r-cost-unit">—</div>
+      </div>
+      <div class="result-cell">
+        <div class="rc-label">ЦЕНА / КГ</div>
+        <div class="rc-value" id="r-price-kg">—</div>
+      </div>
+      <div class="result-cell">
+        <div class="rc-label">ЦЕНА / ШТ</div>
+        <div class="rc-value accent" id="r-price-unit">—</div>
+      </div>
+    </div>
+    <div class="breakdown" id="breakdown"></div>
+    <div class="waste-block" id="waste-block" style="display:none"></div>
+  </div>
+
+  <button class="calc-btn" onclick="calc()">◆ Пересчитать ◆</button>
+
+  <!-- JSON ЭКСПОРТ -->
+  <div class="section" id="sec-json">
+    <div class="section-header" onclick="toggleSec('sec-json')">
+      <span class="sec-num">{ }</span>
+      <span class="sec-title">JSON — экспорт рецептуры</span>
+      <span class="chevron">▾</span>
+    </div>
+    <div class="section-body">
+      <div class="info-block">
+        Единый формат для склада, бота и генератора ТТК. Содержит брутто, нетто, отходы, КБЖУ и полную себестоимость.
+      </div>
+      <div class="json-block" id="json-output">{}</div>
+      <div class="json-actions">
+        <button class="json-btn" id="btn-copy-json" onclick="copyJSON()">◆ Копировать JSON</button>
+        <button class="json-btn" onclick="downloadJSON()">↓ Скачать .json</button>
+        <button class="json-btn" onclick="sendToTTK()">→ В генератор ТТК</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- СОХРАНЕНИЕ -->
+  <div class="section">
+    <div class="section-header no-toggle">
+      <span class="sec-num">💾</span>
+      <span class="sec-title">Сохранить в Telegram</span>
+    </div>
+    <div class="section-body">
+      <div class="field-row">
+        <div><div class="field-label">Telegram username</div><div class="field-hint">Без @ — например: baker_anna</div></div>
+        <input type="text" id="tg-username" placeholder="username">
+      </div>
+      <button class="calc-btn" id="save-btn" onclick="saveRecipe()">◆ Сохранить рецептуру</button>
+      <div id="save-msg" style="display:none;margin-top:10px;font-family:var(--mono);font-size:12px;padding:10px;border-radius:2px;background:var(--paper)"></div>
+    </div>
+  </div>
+
+</div><!-- /main -->
+
+<div class="footer">
+  <div class="footer-brand">◆ PYRA ◆</div>
+  <div>Разработано <a href="https://anton67678.github.io/site-pira-network/" target="_blank">Pyramid Network</a></div>
+</div>
+
+<script>
+// ══════════════════════════════════════════════════════
+// СПРАВОЧНИК ПОТЕРЬ — кондитерское производство
+// ══════════════════════════════════════════════════════
+const LOSS_DB = {
+  'мука пшеничная':     {cold:0,  hot:0,  kbju:{cal:342,p:10.3,f:1.1, c:70.6}},
+  'мука':               {cold:0,  hot:0,  kbju:{cal:342,p:10.3,f:1.1, c:70.6}},
+  'мука миндальная':    {cold:0,  hot:0,  kbju:{cal:602,p:21.4,f:52.1,c:13.7}},
+  'крахмал':            {cold:0,  hot:0,  kbju:{cal:343,p:0.1, f:0,   c:85.0}},
+  'крахмал кукурузный': {cold:0,  hot:0,  kbju:{cal:329,p:0.3, f:0.1, c:79.2}},
+  'сахар':              {cold:0,  hot:0,  kbju:{cal:399,p:0,   f:0,   c:99.8}},
+  'сахарная пудра':     {cold:0,  hot:0,  kbju:{cal:399,p:0,   f:0,   c:99.8}},
+  'сахар коричневый':   {cold:0,  hot:0,  kbju:{cal:377,p:0.3, f:0,   c:96.2}},
+  'мёд':                {cold:0,  hot:0,  kbju:{cal:304,p:0.8, f:0,   c:80.3}},
+  'глюкозный сироп':    {cold:0,  hot:0,  kbju:{cal:316,p:0,   f:0,   c:79.0}},
+  'инвертный сироп':    {cold:0,  hot:0,  kbju:{cal:288,p:0,   f:0,   c:76.0}},
+  'тримолин':           {cold:0,  hot:0,  kbju:{cal:288,p:0,   f:0,   c:76.0}},
+  'яйца':               {cold:12, hot:0,  kbju:{cal:157,p:12.7,f:11.5,c:0.7}},
+  'яйцо':               {cold:12, hot:0,  kbju:{cal:157,p:12.7,f:11.5,c:0.7}},
+  'желток':             {cold:0,  hot:0,  kbju:{cal:352,p:16.2,f:31.2,c:1.0}},
+  'белок':              {cold:0,  hot:0,  kbju:{cal:44, p:11.1,f:0.2, c:0.7}},
+  'масло сливочное':    {cold:0,  hot:0,  kbju:{cal:748,p:0.5, f:82.5,c:0.8}},
+  'молоко':             {cold:0,  hot:0,  kbju:{cal:60, p:2.8, f:3.2, c:4.7}},
+  'сливки 33%':         {cold:0,  hot:0,  kbju:{cal:322,p:2.4, f:33.0,c:3.5}},
+  'сливки 20%':         {cold:0,  hot:0,  kbju:{cal:205,p:2.8, f:20.0,c:3.6}},
+  'сливки':             {cold:0,  hot:0,  kbju:{cal:322,p:2.4, f:33.0,c:3.5}},
+  'сметана':            {cold:0,  hot:0,  kbju:{cal:206,p:2.8, f:20.0,c:3.2}},
+  'творог':             {cold:0,  hot:0,  kbju:{cal:155,p:17.2,f:9.0, c:2.0}},
+  'творожный сыр':      {cold:0,  hot:0,  kbju:{cal:206,p:6.8, f:18.8,c:4.0}},
+  'маскарпоне':         {cold:0,  hot:0,  kbju:{cal:413,p:7.6, f:41.5,c:3.5}},
+  'рикотта':            {cold:0,  hot:0,  kbju:{cal:174,p:11.3,f:13.0,c:3.0}},
+  'сгущённое молоко':   {cold:0,  hot:0,  kbju:{cal:321,p:7.2, f:8.5, c:55.6}},
+  'варёная сгущёнка':   {cold:0,  hot:0,  kbju:{cal:328,p:7.4, f:8.7, c:56.0}},
+  'шоколад тёмный':     {cold:0,  hot:0,  kbju:{cal:539,p:6.2, f:35.4,c:48.2}},
+  'шоколад молочный':   {cold:0,  hot:0,  kbju:{cal:544,p:8.0, f:31.7,c:54.4}},
+  'шоколад белый':      {cold:0,  hot:0,  kbju:{cal:541,p:6.9, f:31.4,c:56.6}},
+  'какао порошок':      {cold:0,  hot:0,  kbju:{cal:289,p:24.3,f:15.0,c:10.2}},
+  'какао-масло':        {cold:0,  hot:0,  kbju:{cal:884,p:0,   f:100, c:0}},
+  'миндаль':            {cold:0,  hot:0,  kbju:{cal:575,p:21.2,f:49.9,c:13.0}},
+  'фундук':             {cold:0,  hot:0,  kbju:{cal:628,p:15.0,f:61.5,c:9.4}},
+  'грецкий орех':       {cold:0,  hot:0,  kbju:{cal:654,p:15.2,f:65.2,c:7.0}},
+  'фисташки':           {cold:0,  hot:0,  kbju:{cal:562,p:20.2,f:45.4,c:16.6}},
+  'арахис':             {cold:0,  hot:0,  kbju:{cal:552,p:26.3,f:45.2,c:9.9}},
+  'клубника':           {cold:5,  hot:0,  kbju:{cal:33, p:0.8, f:0.4, c:7.5}},
+  'малина':             {cold:3,  hot:0,  kbju:{cal:41, p:0.8, f:0.3, c:8.3}},
+  'черника':            {cold:3,  hot:0,  kbju:{cal:44, p:1.1, f:0.6, c:7.6}},
+  'вишня':              {cold:10, hot:0,  kbju:{cal:52, p:0.8, f:0.2, c:10.6}},
+  'клюква':             {cold:3,  hot:0,  kbju:{cal:28, p:0.5, f:0.2, c:6.8}},
+  'манго':              {cold:40, hot:0,  kbju:{cal:65, p:0.5, f:0.3, c:17.0}},
+  'лимон':              {cold:40, hot:0,  kbju:{cal:34, p:0.9, f:0.1, c:3.6}},
+  'лимонный сок':       {cold:0,  hot:0,  kbju:{cal:16, p:0.9, f:0.1, c:3.0}},
+  'апельсин':           {cold:30, hot:0,  kbju:{cal:43, p:0.9, f:0.2, c:8.1}},
+  'банан':              {cold:30, hot:0,  kbju:{cal:95, p:1.5, f:0.1, c:21.8}},
+  'яблоко':             {cold:12, hot:0,  kbju:{cal:52, p:0.3, f:0.4, c:13.8}},
+  'груша':              {cold:10, hot:0,  kbju:{cal:57, p:0.4, f:0.3, c:15.0}},
+  'желатин':            {cold:0,  hot:0,  kbju:{cal:355,p:87.2,f:0.4, c:0}},
+  'агар-агар':          {cold:0,  hot:0,  kbju:{cal:306,p:6.2, f:0.3, c:80.0}},
+  'пектин':             {cold:0,  hot:0,  kbju:{cal:162,p:0,   f:0,   c:38.3}},
+  'разрыхлитель':       {cold:0,  hot:0,  kbju:{cal:53, p:0,   f:0,   c:28.0}},
+  'сода':               {cold:0,  hot:0,  kbju:{cal:0,  p:0,   f:0,   c:0}},
+  'соль':               {cold:0,  hot:0,  kbju:{cal:0,  p:0,   f:0,   c:0}},
+  'ванилин':            {cold:0,  hot:0,  kbju:{cal:288,p:0.1, f:0.1, c:72.5}},
+  'ванильный экстракт': {cold:0,  hot:0,  kbju:{cal:288,p:0,   f:0.1, c:12.7}},
+  'лимонная кислота':   {cold:0,  hot:0,  kbju:{cal:0,  p:0,   f:0,   c:0}},
+  'краситель':          {cold:0,  hot:0,  kbju:{cal:0,  p:0,   f:0,   c:0}},
+  'вода':               {cold:0,  hot:0,  kbju:{cal:0,  p:0,   f:0,   c:0}},
+  'масло растительное': {cold:0,  hot:0,  kbju:{cal:884,p:0,   f:100, c:0}},
+};
+
+function lookupLoss(name) {
+  const key = name.toLowerCase().trim();
+  if (LOSS_DB[key]) return LOSS_DB[key];
+  for (const [k,v] of Object.entries(LOSS_DB)) {
+    if (key.includes(k) || k.includes(key.split(' ')[0])) return v;
+  }
+  return null;
+}
+
+// ══════════════════════════════════════════════════════
+// СОСТОЯНИЕ
+// ══════════════════════════════════════════════════════
+let rowCounter = 0;
+let _lastJSON  = {};
+
+// ══════════════════════════════════════════════════════
+// ИНГРЕДИЕНТЫ
+// ══════════════════════════════════════════════════════
+function addIng(data = {}) {
+  rowCounter++;
+  const id = rowCounter;
+  const div = document.createElement('div');
+  div.className = 'ing-row';
+  div.id = 'irow-' + id;
+  div.innerHTML = `
+    <div class="name-wrap">
+      <input type="text" placeholder="Ингредиент" value="${data.name||''}"
+        oninput="onIngName(${id},this.value)"
+        onfocus="showSuggest(${id})"
+        onblur="hideSuggest(${id},200)">
+      <div class="suggest-list" id="sug-${id}"></div>
+    </div>
+    <input type="number" placeholder="г" value="${data.brutto||''}"
+      step="0.1" oninput="onBrutto(${id})">
+    <input type="number" placeholder="%" value="${data.cold_loss!==undefined?data.cold_loss:''}"
+      step="0.1" min="0" max="99" oninput="onLoss(${id})">
+    <input type="number" placeholder="г" readonly
+      style="color:var(--gold);background:var(--paper)" id="netto-${id}">
+    <input type="number" placeholder="%" value="${data.hot_loss!==undefined?data.hot_loss:''}"
+      step="0.1" min="0" max="99" oninput="onHotLoss(${id})">
+    <input type="number" placeholder="г" readonly
+      style="color:var(--gold2);background:var(--paper)" id="yld-${id}">
+    <input type="number" placeholder="₽/кг" value="${data.price_per_kg||''}"
+      step="0.01" oninput="calc()">
+    <button class="btn-del" onclick="removeIng(${id})">×</button>`;
+  document.getElementById('ing-rows').appendChild(div);
+  if (data.brutto) recalcRow(id);
+}
+
+function removeIng(id) {
+  document.getElementById('irow-'+id)?.remove();
+  calc();
+}
+
+function onIngName(id, val) { showSuggest(id, val); }
+function onBrutto(id)       { recalcRow(id); calc(); }
+function onLoss(id)         { recalcRow(id); calc(); }
+function onHotLoss(id)      { recalcRow(id); calc(); }
+
+function recalcRow(id) {
+  const row = document.getElementById('irow-'+id);
+  if (!row) return;
+  const nums = row.querySelectorAll('input[type=number]');
+  const brutto = parseFloat(nums[0].value)||0;
+  const cold   = parseFloat(nums[1].value)||0;
+  const hot    = parseFloat(nums[3].value)||0;
+  const netto  = brutto*(1-cold/100);
+  const yld    = netto*(1-hot/100);
+  document.getElementById('netto-'+id).value = netto.toFixed(1);
+  document.getElementById('yld-'+id).value   = yld.toFixed(1);
+}
+
+function showSuggest(id, query) {
+  const row = document.getElementById('irow-'+id);
+  if (!row) return;
+  const q = (query !== undefined ? query : row.querySelector('input[type=text]').value).toLowerCase().trim();
+  const list = document.getElementById('sug-'+id);
+  if (!q || q.length < 2) { list.style.display='none'; return; }
+  const hits = Object.entries(LOSS_DB).filter(([k]) => k.includes(q)).slice(0,8);
+  if (!hits.length) { list.style.display='none'; return; }
+  list.innerHTML = hits.map(([k,v]) =>
+    `<div class="suggest-item" onmousedown="applySuggest(${id},'${k}')">
+      ${k}<span class="si-loss">хол.${v.cold}% / теп.${v.hot}%</span>
+    </div>`).join('');
+  list.style.display = 'block';
+}
+
+function hideSuggest(id, delay=0) {
+  setTimeout(() => { const l=document.getElementById('sug-'+id); if(l) l.style.display='none'; }, delay);
+}
+
+function applySuggest(id, key) {
+  const row = document.getElementById('irow-'+id);
+  if (!row) return;
+  const txt  = row.querySelector('input[type=text]');
+  const nums = row.querySelectorAll('input[type=number]');
+  txt.value      = key.charAt(0).toUpperCase()+key.slice(1);
+  const db = LOSS_DB[key];
+  if (db) { nums[1].value = db.cold; nums[3].value = db.hot; }
+  hideSuggest(id);
+  recalcRow(id);
+  calc();
+}
+
+function collectIng() {
+  const rows = [];
+  document.querySelectorAll('#ing-rows .ing-row').forEach(row => {
+    const txt  = row.querySelector('input[type=text]');
+    const nums = row.querySelectorAll('input[type=number]');
+    const id   = row.id.replace('irow-','');
+    const name     = txt?.value||'';
+    const brutto   = parseFloat(nums[0]?.value)||0;
+    const coldLoss = parseFloat(nums[1]?.value)||0;
+    const netto    = parseFloat(document.getElementById('netto-'+id)?.value) || brutto*(1-coldLoss/100);
+    const hotLoss  = parseFloat(nums[3]?.value)||0;
+    const yieldG   = parseFloat(document.getElementById('yld-'+id)?.value)   || netto*(1-hotLoss/100);
+    const priceKg  = parseFloat(nums[5]?.value)||0;
+    const waste    = +(brutto - netto).toFixed(2);
+    const db       = lookupLoss(name);
+    const kbju     = db?.kbju || {cal:0,p:0,f:0,c:0};
+    if (name||brutto) rows.push({name,brutto,cold_loss:coldLoss,netto:+netto.toFixed(1),hot_loss:hotLoss,yield_g:+yieldG.toFixed(1),waste_g:waste,price_per_kg:priceKg,kbju});
+  });
+  return rows;
+}
+
+// ══════════════════════════════════════════════════════
+// РАСХОДНИКИ
+// ══════════════════════════════════════════════════════
+function addExp(data = {}) {
+  rowCounter++;
+  const id = rowCounter;
+  const div = document.createElement('div');
+  div.className = 'exp-row';
+  div.id = 'erow-'+id;
+  div.innerHTML = `
+    <input type="text" placeholder="Коробка, подложка…" value="${data.name||''}" oninput="calc()">
+    <input type="number" placeholder="шт" value="${data.qty||1}" min="0" step="0.01" oninput="calcExpRow(${id})">
+    <input type="number" placeholder="₽" value="${data.price||''}" min="0" step="0.01" oninput="calcExpRow(${id})">
+    <div class="ro-cell" id="esum-${id}">0.00</div>
+    <button class="btn-del" onclick="removeExp(${id})">×</button>`;
+  document.getElementById('exp-rows').appendChild(div);
+  calc();
+}
+
+function removeExp(id) {
+  document.getElementById('erow-'+id)?.remove();
+  calc();
+}
+
+function calcExpRow(id) {
+  const row  = document.getElementById('erow-'+id);
+  if (!row) return;
+  const nums = row.querySelectorAll('input[type=number]');
+  const sum  = (parseFloat(nums[0]?.value)||0)*(parseFloat(nums[1]?.value)||0);
+  const cell = document.getElementById('esum-'+id);
+  if (cell) cell.textContent = sum.toFixed(2);
+  calc();
+}
+
+function collectExp() {
+  const rows = [];
+  document.querySelectorAll('#exp-rows .exp-row').forEach(row => {
+    const id   = row.id.replace('erow-','');
+    const txt  = row.querySelector('input[type=text]');
+    const nums = row.querySelectorAll('input[type=number]');
+    const name  = txt?.value||'';
+    const qty   = parseFloat(nums[0]?.value)||0;
+    const price = parseFloat(nums[1]?.value)||0;
+    const sum   = +(qty*price).toFixed(2);
+    if (name||sum) rows.push({name,qty,price,sum});
+  });
+  return rows;
+}
+
+// ══════════════════════════════════════════════════════
+// КБЖУ
+// ══════════════════════════════════════════════════════
+function calcKBJU(ing, batchWeight, unitWeight) {
+  let cal=0,prot=0,fat=0,carb=0;
+  ing.forEach(r => {
+    const n = r.netto;
+    cal  += (r.kbju.cal||0)*n/100;
+    prot += (r.kbju.p  ||0)*n/100;
+    fat  += (r.kbju.f  ||0)*n/100;
+    carb += (r.kbju.c  ||0)*n/100;
+  });
+  const f1kg  = batchWeight>0 ? 1000/batchWeight : 1;
+  const perKg = {cal:cal*f1kg, prot:prot*f1kg, fat:fat*f1kg, carb:carb*f1kg};
+  const fUnit = unitWeight>0  ? unitWeight/1000 : 0;
+  const perUnit = {cal:perKg.cal*fUnit, prot:perKg.prot*fUnit, fat:perKg.fat*fUnit, carb:perKg.carb*fUnit};
+  return {perKg, perUnit};
+}
+
+// ══════════════════════════════════════════════════════
+// ОСНОВНОЙ РАСЧЁТ
+// ══════════════════════════════════════════════════════
+function calc() {
+  const batchWeight = Math.max(1, parseFloat(document.getElementById('batch-weight').value)||2000);
+  const unitsCount  = Math.max(1, parseInt(document.getElementById('units-count').value)||1);
+  const unitWeightInput = parseFloat(document.getElementById('unit-weight').value)||0;
+  const unitWeight = unitWeightInput > 0 ? unitWeightInput : batchWeight/unitsCount;
+
+  // Hint
+  document.getElementById('yield-hint').textContent =
+    `${unitsCount} шт × ${unitWeight.toFixed(1)} г = ${(unitsCount*unitWeight).toFixed(0)} г`;
+  document.getElementById('tot-yield').textContent = `${unitsCount} шт · ${unitWeight.toFixed(0)} г`;
+
+  // Ингредиенты
+  const ing = collectIng();
+  let ingCostBatch = 0;
+  ing.forEach(r => { ingCostBatch += (r.netto/1000)*r.price_per_kg; });
+  const ingCostKg   = batchWeight>0 ? (ingCostBatch/batchWeight)*1000 : 0;
+  const ingCostUnit = unitsCount>0  ? ingCostBatch/unitsCount : 0;
+  document.getElementById('tot-ing').textContent = fmt(ingCostBatch)+' ₽';
+
+  // Расходники
+  const exp = collectExp();
+  let expCostBatch = 0;
+  exp.forEach(r => { expCostBatch += r.sum; });
+  const expCostUnit = unitsCount>0 ? expCostBatch/unitsCount : 0;
+  document.getElementById('tot-exp').textContent = fmt(expCostBatch)+' ₽';
+
+  // Косвенные
+  const laborRate   = parseFloat(document.getElementById('ov-labor-rate').value)||0;
+  const laborTime   = parseFloat(document.getElementById('ov-labor-time').value)||0;
+  const equipCost   = parseFloat(document.getElementById('ov-equip-cost').value)||0;
+  const equipLife   = Math.max(1,parseFloat(document.getElementById('ov-equip-life').value)||5);
+  const batchMonth  = Math.max(1,parseFloat(document.getElementById('ov-batches-month').value)||30);
+  const util        = parseFloat(document.getElementById('ov-util').value)||0;
+  const rent        = parseFloat(document.getElementById('ov-rent').value)||0;
+  const other       = parseFloat(document.getElementById('ov-other').value)||0;
+
+  const laborBatch  = (laborRate/60)*laborTime;
+  const laborUnit   = unitsCount>0 ? laborBatch/unitsCount : 0;
+  const amorBatch   = equipCost/(equipLife*12*batchMonth);
+  const amorUnit    = unitsCount>0 ? amorBatch/unitsCount : 0;
+  const fixedBatch  = (util+rent+other)/batchMonth;
+  const fixedUnit   = unitsCount>0 ? fixedBatch/unitsCount : 0;
+  const ovUnit      = laborUnit+amorUnit+fixedUnit;
+  document.getElementById('tot-overhead').textContent = fmt(ovUnit)+' ₽/шт';
+
+  // Себестоимость
+  const costUnit    = ingCostUnit+expCostUnit+ovUnit;
+  const costKg      = unitWeight>0 ? (costUnit/unitWeight)*1000 : 0;
+
+  // Наценка
+  const markupPct   = parseFloat(document.getElementById('markup-input').value)||0;
+  const vatPct      = parseFloat(document.getElementById('vat-pct').value)||0;
+  const priceUnit   = costUnit*(1+markupPct/100)*(1+vatPct/100);
+  const priceKg     = costKg *(1+markupPct/100)*(1+vatPct/100);
+  document.getElementById('tot-markup').textContent = '×'+(1+markupPct/100).toFixed(1);
+
+  // Результат
+  document.getElementById('r-cost-kg').textContent   = fmt(costKg)+' ₽';
+  document.getElementById('r-cost-unit').textContent  = fmt(costUnit)+' ₽';
+  document.getElementById('r-price-kg').textContent   = fmt(priceKg)+' ₽';
+  document.getElementById('r-price-unit').textContent = fmt(priceUnit)+' ₽';
+
+  // Breakdown
+  document.getElementById('breakdown').innerHTML = `
+    <div class="bd-row"><span class="n">Ингредиенты / замес</span><span class="v">${fmt(ingCostBatch)} ₽</span></div>
+    <div class="bd-row"><span class="n">Ингредиенты / шт</span><span class="v">${fmt(ingCostUnit)} ₽</span></div>
+    <div class="bd-row"><span class="n">Расходники / замес</span><span class="v">${fmt(expCostBatch)} ₽</span></div>
+    <div class="bd-row"><span class="n">Расходники / шт</span><span class="v">${fmt(expCostUnit)} ₽</span></div>
+    <div class="bd-row"><span class="n">Труд кондитера / шт</span><span class="v">${fmt(laborUnit)} ₽</span></div>
+    <div class="bd-row"><span class="n">Амортизация / шт</span><span class="v">${fmt(amorUnit)} ₽</span></div>
+    <div class="bd-row"><span class="n">Коммуналка+аренда+прочее / шт</span><span class="v">${fmt(fixedUnit)} ₽</span></div>
+    <div class="bd-row total"><span class="n">Себестоимость / шт (${unitWeight.toFixed(0)} г)</span><span class="v">${fmt(costUnit)} ₽</span></div>
+    <div class="bd-row total"><span class="n">Себестоимость / кг</span><span class="v">${fmt(costKg)} ₽</span></div>
+    <div class="bd-row price-row"><span class="n">Цена продажи / шт (наценка ${markupPct}%, НДС ${vatPct}%)</span><span class="v">${fmt(priceUnit)} ₽</span></div>`;
+
+  // Отходы
+  const wastes = ing.filter(r => r.waste_g > 0);
+  const wb = document.getElementById('waste-block');
+  if (wastes.length) {
+    const totalWaste = wastes.reduce((s,r)=>s+r.waste_g,0);
+    wb.style.display = 'block';
+    wb.innerHTML = `<div class="waste-title">▲ Отходы производства (для акта списания)</div>`
+      + wastes.map(r=>`<div class="waste-row"><span class="wn">${r.name}</span><span class="wv">${r.waste_g.toFixed(1)} г</span></div>`).join('')
+      + `<div class="waste-total"><span class="wn">Итого отходов</span><span class="wv">${totalWaste.toFixed(1)} г</span></div>`;
+  } else {
+    wb.style.display = 'none';
+  }
+
+  // КБЖУ
+  const kbju = calcKBJU(ing, batchWeight, unitWeight);
+
+  // JSON
+  const state = buildState(ing, exp, batchWeight, unitsCount, unitWeight, costUnit, costKg, priceUnit, priceKg, kbju, markupPct, vatPct, laborBatch, amorBatch, fixedBatch);
+  _lastJSON = state;
+  document.getElementById('json-output').textContent = JSON.stringify(state, null, 2);
+}
+
+function buildState(ing, exp, batchWeight, unitsCount, unitWeight, costUnit, costKg, priceUnit, priceKg, kbju, markupPct, vatPct, laborBatch, amorBatch, fixedBatch) {
+  return {
+    type: 'bakery',
+    name: document.getElementById('product-name').value.trim()||'',
+    group: document.getElementById('product-group').value.trim()||'',
+    card_number: document.getElementById('card-number').value.trim()||'',
+    org_name: document.getElementById('org-name').value.trim()||'',
+    cooking_method: document.getElementById('cooking-method').value,
+    created: new Date().toISOString(),
+    yield: {
+      batch_weight_g: batchWeight,
+      units_count: unitsCount,
+      unit_weight_g: +unitWeight.toFixed(1)
+    },
+    ingredients: ing.map(r=>({
+      name: r.name,
+      brutto_g: r.brutto,
+      cold_loss_pct: r.cold_loss,
+      netto_g: r.netto,
+      hot_loss_pct: r.hot_loss,
+      yield_g: r.yield_g,
+      waste_g: r.waste_g,
+      price_per_kg: r.price_per_kg,
+      kbju: r.kbju
+    })),
+    consumables: exp,
+    overhead: {
+      labor_batch: +laborBatch.toFixed(2),
+      amortization_batch: +amorBatch.toFixed(2),
+      fixed_batch: +fixedBatch.toFixed(2)
+    },
+    pricing: {
+      markup_pct: markupPct,
+      vat_pct: vatPct,
+      cost_per_unit: +costUnit.toFixed(2),
+      cost_per_kg: +costKg.toFixed(2),
+      price_per_unit: +priceUnit.toFixed(2),
+      price_per_kg: +priceKg.toFixed(2)
+    },
+    nutrition: {
+      per_unit: {
+        cal: +kbju.perUnit.cal.toFixed(1),
+        prot: +kbju.perUnit.prot.toFixed(2),
+        fat: +kbju.perUnit.fat.toFixed(2),
+        carb: +kbju.perUnit.carb.toFixed(2)
+      },
+      per_kg: {
+        cal: +kbju.perKg.cal.toFixed(1),
+        prot: +kbju.perKg.prot.toFixed(2),
+        fat: +kbju.perKg.fat.toFixed(2),
+        carb: +kbju.perKg.carb.toFixed(2)
+      }
+    },
+    stock_write_off: ing.map(r=>({
+      ingredient: r.name,
+      brutto_g_per_batch: r.brutto,
+      netto_g_per_batch: r.netto,
+      waste_g_per_batch: r.waste_g,
+      brutto_g_per_unit: +(r.brutto/unitsCount).toFixed(2),
+      waste_g_per_unit: +(r.waste_g/unitsCount).toFixed(2)
+    }))
+  };
+}
+
+// ══════════════════════════════════════════════════════
+// JSON ACTIONS
+// ══════════════════════════════════════════════════════
+function copyJSON() {
+  const text = JSON.stringify(_lastJSON, null, 2);
+  navigator.clipboard.writeText(text).then(() => {
+    const btn = document.getElementById('btn-copy-json');
+    const orig = btn.textContent;
+    btn.textContent = '✓ Скопировано';
+    btn.classList.add('success');
+    setTimeout(()=>{ btn.textContent=orig; btn.classList.remove('success'); }, 2500);
+  });
+}
+
+function downloadJSON() {
+  const name = (_lastJSON.name||'recipe').replace(/[^а-яёa-z0-9]/gi,'_');
+  const blob = new Blob([JSON.stringify(_lastJSON, null, 2)], {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name+'.json';
+  a.click();
+}
+
+function sendToTTK() {
+  localStorage.setItem('pyra_ttk_import', JSON.stringify(_lastJSON));
+  window.open('ttk-generator.html?import=1', '_blank');
+}
+
+// ══════════════════════════════════════════════════════
+// FIREBASE SAVE
+// ══════════════════════════════════════════════════════
+async function saveRecipe() {
+  const username = document.getElementById('tg-username').value.trim().replace('@','');
+  if (!username) { showSaveMsg('⚠️ Введи Telegram username','error'); return; }
+  if (!_lastJSON.name) { showSaveMsg('⚠️ Введи название изделия','error'); return; }
+
+  const btn = document.getElementById('save-btn');
+  btn.textContent = '⏳ Сохраняю...'; btn.disabled = true;
+
+  try {
+    const newRef = window._firebasePush(window._firebaseRef(`recipes/${username}`));
+    await window._firebaseSet(newRef, _lastJSON);
+    showSaveMsg('✅ Сохранено! Напиши /recipes боту @cenarecepta_bot','success');
+  } catch(e) {
+    showSaveMsg('❌ Ошибка: '+e.message,'error');
+  }
+  btn.textContent = '◆ Сохранить рецептуру'; btn.disabled = false;
+}
+
+function showSaveMsg(text, type) {
+  const el = document.getElementById('save-msg');
+  el.textContent = text;
+  el.style.color = type==='success' ? '#5a8c64' : '#c0504a';
+  el.style.display = 'block';
+  setTimeout(()=> el.style.display='none', 6000);
+}
+
+// ══════════════════════════════════════════════════════
+// UI HELPERS
+// ══════════════════════════════════════════════════════
+function toggleSec(id) { document.getElementById(id)?.classList.toggle('collapsed'); }
+
+function syncMarkup(val) {
+  document.getElementById('markup-input').value = val;
+  document.getElementById('markup-display').textContent = val+'%';
+  calc();
+}
+function syncMarkupInput(val) {
+  const v = Math.max(0, Math.min(500, parseFloat(val)||0));
+  document.getElementById('markup-range').value = Math.min(v,500);
+  document.getElementById('markup-display').textContent = v+'%';
+  calc();
+}
+
+function onUnitsChange() {
+  // сброс ручного веса штуки при изменении количества
+  document.getElementById('unit-weight').value = '';
+  calc();
+}
+function onUnitWeightChange() {
+  // если вручную вводят вес штуки — пересчитываем количество
+  calc();
+}
+
+function toggleTheme() {
+  const light = document.documentElement.classList.toggle('light');
+  document.getElementById('btn-dark').classList.toggle('active',!light);
+  document.getElementById('btn-light').classList.toggle('active',light);
+}
+
+function fmt(n) { return (parseFloat(n)||0).toFixed(2); }
+
+// ══════════════════════════════════════════════════════
+// INIT — демо-рецепт: Медовик
+// ══════════════════════════════════════════════════════
+(function init() {
+  const today = new Date();
+  document.getElementById('doc-date').value =
+    `${String(today.getDate()).padStart(2,'0')}.${String(today.getMonth()+1).padStart(2,'0')}.${today.getFullYear()}`;
+
+  // Реквизиты
+  document.getElementById('org-name').value     = 'ИП Иванова А.С.';
+  document.getElementById('product-name').value = 'Торт «Медовик»';
+  document.getElementById('product-group').value= 'Торты';
+  document.getElementById('card-number').value  = 'К-001';
+  document.getElementById('batch-weight').value = '1800';
+  document.getElementById('units-count').value  = '1';
+
+  // Ингредиенты
+  addIng({name:'Мука пшеничная',  brutto:400, cold_loss:0, hot_loss:0,  price_per_kg:55});
+  addIng({name:'Сахар',           brutto:250, cold_loss:0, hot_loss:0,  price_per_kg:65});
+  addIng({name:'Мёд',             brutto:120, cold_loss:0, hot_loss:0,  price_per_kg:350});
+  addIng({name:'Масло сливочное', brutto:200, cold_loss:0, hot_loss:0,  price_per_kg:680});
+  addIng({name:'Яйца',            brutto:180, cold_loss:12,hot_loss:0,  price_per_kg:150});
+  addIng({name:'Сода',            brutto:10,  cold_loss:0, hot_loss:0,  price_per_kg:40});
+  addIng({name:'Сливки 33%',      brutto:500, cold_loss:0, hot_loss:0,  price_per_kg:320});
+
+  // Расходники
+  addExp({name:'Подложка 26 см',  qty:1, price:25});
+  addExp({name:'Коробка',         qty:1, price:80});
+  addExp({name:'Лента атласная',  qty:1, price:15});
+
+  // Косвенные
+  document.getElementById('ov-labor-rate').value  = '350';
+  document.getElementById('ov-labor-time').value  = '180';
+  document.getElementById('ov-equip-cost').value  = '80000';
+  document.getElementById('ov-util').value        = '3000';
+  document.getElementById('ov-batches-month').value = '20';
+
+  calc();
+})();
+</script>
+</body>
+</html>
