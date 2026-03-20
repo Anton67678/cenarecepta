@@ -251,21 +251,35 @@ async def cmd_recipes(message: types.Message):
 
 
 def _flatten_recipes(raw: dict) -> list:
-    """Собирает рецепты из любой вложенности Firebase"""
+    """
+    Собирает все рецепты из Firebase в плоский список с индексами.
+    Поддерживает оба формата:
+      - recipes/{username}/{push_id} → объект рецепта (прямой)
+      - recipes/{username}/{outlet}/{push_id} → объект рецепта (вложенный)
+    """
     result = []
-    idx = 1
+
     for key, val in raw.items():
-        if isinstance(val, dict):
-            if 'name' in val:
-                # Прямая рецептура
-                result.append((idx, val))
-                idx += 1
-            else:
-                # Вложенный уровень (outlet_id)
-                for subkey, subval in val.items():
-                    if isinstance(subval, dict) and 'name' in subval:
-                        result.append((idx, subval))
-                        idx += 1
+        if not isinstance(val, dict):
+            continue
+
+        if 'name' in val:
+            # Прямой рецепт — новый формат (bakery/catering)
+            result.append(val)
+        else:
+            # Вложенный уровень — старый формат через outlet
+            for subkey, subval in val.items():
+                if isinstance(subval, dict) and 'name' in subval:
+                    result.append(subval)
+
+    # Сортируем: сначала старый формат (v1), потом новый (Pro)
+    # внутри групп — по имени
+    def sort_key(r):
+        is_new = 'yield' in r or 'stock_write_off' in r or 'pricing' in r
+        name   = r.get('name', '')
+        return (1 if is_new else 0, name)
+
+    result.sort(key=sort_key)
     return result
 
 # ══════════════════════════════════════════════════════
