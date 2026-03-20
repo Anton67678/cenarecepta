@@ -1,0 +1,1282 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Продажи — PYRA</title>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,300;1,400&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+import { getDatabase, ref, get, set, push, update }
+  from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
+import { getAuth, signInAnonymously }
+  from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyCEWWRUKpJ2tJdsUkTfMTKTH7Lfmc9dZs0",
+  authDomain: "cenarecepta-calc.firebaseapp.com",
+  databaseURL: "https://cenarecepta-calc-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId: "cenarecepta-calc",
+  storageBucket: "cenarecepta-calc.firebasestorage.app",
+  messagingSenderId: "72447381131",
+  appId: "1:72447381131:web:dee8cf51dd3af8133d4e8e"
+};
+
+const app  = initializeApp(firebaseConfig);
+const db   = getDatabase(app);
+const auth = getAuth(app);
+signInAnonymously(auth).catch(console.error);
+
+// ══════════════════════════════════════════════════════
+// СОСТОЯНИЕ
+// ══════════════════════════════════════════════════════
+let _username  = '';
+let _outlet    = 'main';
+let _recipes   = {};   // все рецепты пользователя
+let _sales     = [];   // загруженные продажи
+let _stock     = {};   // остатки (для авто-списания)
+let _ingredients = {}; // справочник
+
+// ══════════════════════════════════════════════════════
+// ПУТИ FIREBASE
+// ══════════════════════════════════════════════════════
+const path = {
+  recipes:     ()    => `recipes/${_username}`,
+  sales:       ()    => `sales/${_username}/${_outlet}`,
+  sale:        (id)  => `sales/${_username}/${_outlet}/${id}`,
+  stock:       (id)  => `stock/${_username}/${_outlet}/${id}`,
+  stockAll:    ()    => `stock/${_username}/${_outlet}`,
+  movements:   ()    => `stock_movements/${_username}/${_outlet}`,
+  ingredients: ()    => `ingredients/${_username}`,
+};
+
+// ══════════════════════════════════════════════════════
+// ИНИЦИАЛИЗАЦИЯ
+// ══════════════════════════════════════════════════════
+window.initSales = async function() {
+  _username = document.getElementById('s-username').value.trim().replace('@','');
+  _outlet   = document.getElementById('s-outlet').value.trim() || 'main';
+  if (!_username) { showMsg('main-msg','⚠️ Введи username','error'); return; }
+
+  localStorage.setItem('pyra_username', _username);
+  localStorage.setItem('pyra_outlet',   _outlet);
+
+  setBusy(true);
+  try {
+    await Promise.all([loadRecipes(), loadSales(), loadStock(), loadIngredients()]);
+    document.getElementById('workspace').style.display = 'block';
+    document.getElementById('login-hint').style.display = 'none';
+    renderAll();
+    showMsg('main-msg',`✅ Загружено: ${Object.keys(_recipes).length} рецептов, ${_sales.length} продаж`,'success');
+  } catch(e) {
+    showMsg('main-msg','❌ Ошибка загрузки: '+e.message,'error');
+  }
+  setBusy(false);
+};
+
+async function loadRecipes() {
+  const snap = await get(ref(db, path.recipes()));
+  _recipes = {};
+  if (!snap.exists()) return;
+  // Плоский список из всех outlet
+  Object.values(snap.val()).forEach(outletData => {
+    if (typeof outletData !== 'object') return;
+    Object.entries(outletData).forEach(([rid, rec]) => {
+      if (rec?.name) _recipes[rid] = rec;
+    });
+  });
+}
+
+async function loadSales() {
+  const snap = await get(ref(db, path.sales()));
+  if (snap.exists()) {
+    _sales = Object.entries(snap.val())
+      .map(([k,v]) => ({...v, _key: k}))
+      .sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp));
+  } else {
+    _sales = [];
+  }
+}
+
+async function loadStock() {
+  const snap = await get(ref(db, path.stockAll()));
+  _stock = snap.exists() ? snap.val() : {};
+}
+
+async function loadIngredients() {
+  const snap = await get(ref(db, path.ingredients()));
+  _ingredients = snap.exists() ? snap.val() : {};
+}
+
+function setBusy(on) {
+  const btn = document.getElementById('load-btn');
+  btn.textContent = on ? '⏳ Загружаю...' : '◆ Загрузить';
+  btn.disabled = on;
+}
+
+// ══════════════════════════════════════════════════════
+// МОДАЛКА НОВОЙ ПРОДАЖИ
+// ══════════════════════════════════════════════════════
+window.openSaleModal = function() {
+  if (!Object.keys(_recipes).length) {
+    showMsg('main-msg','⚠️ Сначала создай рецепты в калькуляторе','error'); return;
+  }
+  document.getElementById('modal-sale').style.display = 'flex';
+  document.getElementById('sale-date').value = todayStr();
+  document.getElementById('sale-rows-container').innerHTML = '';
+  document.getElementById('sale-preview').innerHTML = '';
+  addSaleRow();
+};
+
+window.closeSaleModal = function() {
+  document.getElementById('modal-sale').style.display = 'none';
+};
+
+window.addSaleRow = function() {
+  const id  = Date.now();
+  const div = document.createElement('div');
+  div.className = 'sale-row';
+  div.id = 'sale-row-'+id;
+
+  // Опции рецептов, сортировка по группе → имя
+  const options = Object.entries(_recipes)
+    .sort(([,a],[,b]) => {
+      const ga = a.group||a.product_group||'';
+      const gb = b.group||b.product_group||'';
+      if (ga!==gb) return ga.localeCompare(gb,'ru');
+      return (a.name||'').localeCompare(b.name||'','ru');
+    })
+    .map(([k,v]) => `<option value="${k}">${v.name}${v.group?' ('+v.group+')':''}</option>`)
+    .join('');
+
+  div.innerHTML = `
+    <select class="form-input" style="grid-column:1/2" onchange="onSaleRowRecipeChange(${id})">
+      <option value="">— Выбери блюдо —</option>
+      ${options}
+    </select>
+    <input type="number" class="form-input" id="sr-qty-${id}"
+      placeholder="Кол-во" min="0" step="1" value="1" oninput="previewSale()">
+    <input type="number" class="form-input" id="sr-price-${id}"
+      placeholder="Цена ₽" min="0" step="0.01" oninput="previewSale()">
+    <div style="font-family:var(--mono);font-size:12px;color:var(--gold2);text-align:right;padding:7px 0" id="sr-sum-${id}">—</div>
+    <button class="btn-del" onclick="removeSaleRow(${id})">×</button>`;
+
+  document.getElementById('sale-rows-container').appendChild(div);
+};
+
+window.removeSaleRow = function(id) {
+  document.getElementById('sale-row-'+id)?.remove();
+  previewSale();
+};
+
+window.onSaleRowRecipeChange = function(id) {
+  const row = document.getElementById('sale-row-'+id);
+  const rid = row?.querySelector('select')?.value;
+  if (!rid || !_recipes[rid]) return;
+  const rec = _recipes[rid];
+  // Подставляем цену из рецепта
+  const priceEl = document.getElementById('sr-price-'+id);
+  if (priceEl && !priceEl.value) {
+    priceEl.value = rec.pricing?.price_per_unit || '';
+  }
+  previewSale();
+};
+
+window.previewSale = function() {
+  const items = collectSaleItems();
+  let html = '';
+  let totalRev = 0, totalCost = 0;
+
+  items.forEach(item => {
+    const rev  = item.qty * item.price;
+    const cost = (item.recipe?.pricing?.cost_per_unit||0) * item.qty;
+    const margin = rev > 0 ? ((rev-cost)/rev*100).toFixed(1) : '—';
+    totalRev  += rev;
+    totalCost += cost;
+    const sum = document.getElementById('sr-sum-'+item.rowId);
+    if (sum) sum.textContent = rev.toFixed(2)+' ₽';
+    html += `<div class="preview-row">
+      <span>${item.recipeName}</span>
+      <span style="color:var(--muted)">${item.qty} шт</span>
+      <span style="color:var(--gold2)">${rev.toFixed(2)} ₽</span>
+      <span style="color:var(--muted);font-size:11px">себест. ${cost.toFixed(2)} ₽</span>
+      <span style="color:${parseFloat(margin)>=50?'var(--green)':'var(--gold)'}">${margin}%</span>
+    </div>`;
+  });
+
+  if (items.length) {
+    const grossProfit = totalRev - totalCost;
+    const margin = totalRev>0 ? (grossProfit/totalRev*100).toFixed(1) : '0';
+    html += `<div class="preview-total">
+      <span>ИТОГО выручка</span>
+      <span style="color:var(--gold3);font-size:16px">${totalRev.toFixed(2)} ₽</span>
+      <span>Себестоимость</span>
+      <span style="color:var(--red)">${totalCost.toFixed(2)} ₽</span>
+      <span>Валовая прибыль</span>
+      <span style="color:var(--green)">${grossProfit.toFixed(2)} ₽ (${margin}%)</span>
+    </div>`;
+  }
+
+  document.getElementById('sale-preview').innerHTML = html;
+};
+
+function collectSaleItems() {
+  const items = [];
+  document.querySelectorAll('#sale-rows-container .sale-row').forEach(row => {
+    const id  = row.id.replace('sale-row-','');
+    const rid = row.querySelector('select')?.value;
+    if (!rid) return;
+    const qty   = parseFloat(document.getElementById('sr-qty-'+id)?.value)||0;
+    const price = parseFloat(document.getElementById('sr-price-'+id)?.value)||0;
+    if (!qty) return;
+    items.push({
+      rowId: id,
+      recipe_id: rid,
+      recipeName: _recipes[rid]?.name||'—',
+      recipe: _recipes[rid],
+      qty,
+      price,
+    });
+  });
+  return items;
+}
+
+// ══════════════════════════════════════════════════════
+// СОХРАНИТЬ ПРОДАЖУ + АВТО-СПИСАНИЕ
+// ══════════════════════════════════════════════════════
+window.saveSale = async function() {
+  const items = collectSaleItems();
+  if (!items.length) { showMsg('sale-modal-msg','⚠️ Добавь хотя бы одно блюдо','error'); return; }
+
+  const date    = document.getElementById('sale-date').value;
+  const note    = document.getElementById('sale-note').value.trim();
+  const doStock = document.getElementById('sale-do-writeoff').checked;
+  const now     = new Date().toISOString();
+
+  const saleItems = items.map(item => ({
+    recipe_id:    item.recipe_id,
+    recipe_name:  item.recipeName,
+    portions_sold: item.qty,
+    price_per_unit: item.price,
+    revenue:      +(item.qty * item.price).toFixed(2),
+    cost_per_unit: item.recipe?.pricing?.cost_per_unit||0,
+    cost_total:   +((item.recipe?.pricing?.cost_per_unit||0)*item.qty).toFixed(2),
+  }));
+
+  const totalRev  = saleItems.reduce((s,i)=>s+i.revenue,0);
+  const totalCost = saleItems.reduce((s,i)=>s+i.cost_total,0);
+
+  const saleDoc = {
+    source: 'manual',
+    pos_system: null,
+    pos_transaction_id: null,
+    date,
+    timestamp: now,
+    note,
+    outlet_id: _outlet,
+    items: saleItems,
+    totals: {
+      total_items:   saleItems.length,
+      total_portions: saleItems.reduce((s,i)=>s+i.portions_sold,0),
+      total_revenue:  +totalRev.toFixed(2),
+      total_cost:     +totalCost.toFixed(2),
+      gross_profit:   +(totalRev-totalCost).toFixed(2),
+      margin_pct:     totalRev>0 ? +((totalRev-totalCost)/totalRev*100).toFixed(1) : 0,
+    },
+    write_off_triggered: doStock,
+    write_off_id: null,
+  };
+
+  const saveBtn = document.getElementById('save-sale-btn');
+  saveBtn.disabled = true; saveBtn.textContent = '⏳ Сохраняю...';
+
+  try {
+    // 1. Сохраняем продажу
+    const saleRef = push(ref(db, path.sales()));
+    await set(saleRef, saleDoc);
+    saleDoc._key = saleRef.key;
+
+    // 2. Авто-списание со склада
+    if (doStock) {
+      await applyWriteOffFromSale(saleItems, saleRef.key, now);
+    }
+
+    _sales.unshift(saleDoc);
+    closeSaleModal();
+    renderAll();
+    showMsg('main-msg',
+      `✅ Продажа сохранена · Выручка: ${totalRev.toFixed(2)} ₽${doStock?' · Склад списан':''}`,
+      'success');
+  } catch(e) {
+    showMsg('sale-modal-msg','❌ '+e.message,'error');
+  }
+  saveBtn.disabled = false; saveBtn.textContent = '◆ Сохранить продажу';
+};
+
+// ══════════════════════════════════════════════════════
+// ЛОГИКА СПИСАНИЯ СО СКЛАДА
+// ══════════════════════════════════════════════════════
+async function applyWriteOffFromSale(saleItems, saleId, now) {
+  // Агрегируем расход по ингредиентам
+  const stockDelta = {}; // ingredient_id → delta_g
+  const movements  = [];
+
+  saleItems.forEach(item => {
+    const rec = _recipes[item.recipe_id];
+    if (!rec?.stock_write_off?.per_portion) return;
+
+    rec.stock_write_off.per_portion.forEach(wo => {
+      const ingId = resolveIngredientId(wo.ingredient, wo.ingredient_id);
+      if (!ingId) return;
+
+      const writeG = wo.brutto_g * item.portions_sold;
+      if (!stockDelta[ingId]) stockDelta[ingId] = 0;
+      stockDelta[ingId] -= writeG;
+
+      movements.push({
+        type: 'sale_write_off',
+        ingredient_id:   ingId,
+        ingredient_name: _ingredients[ingId]?.name || wo.ingredient,
+        quantity_g:      -writeG,
+        reason:          `Продажа: ${item.recipe_name} × ${item.portions_sold}`,
+        recipe_id:       item.recipe_id,
+        recipe_name:     item.recipe_name,
+        portions:        item.portions_sold,
+        sale_id:         saleId,
+        timestamp:       now,
+      });
+    });
+  });
+
+  // Применяем к остаткам
+  for (const [ingId, delta] of Object.entries(stockDelta)) {
+    const cur    = _stock[ingId]?.quantity_g || 0;
+    const newQty = Math.max(0, cur + delta);
+    await set(ref(db, path.stock(ingId)), { quantity_g: newQty, last_updated: now });
+    _stock[ingId] = { quantity_g: newQty };
+    movements.filter(m=>m.ingredient_id===ingId)
+             .forEach(m=>m.balance_after_g = newQty);
+  }
+
+  // Записываем движения
+  for (const mv of movements) {
+    const mvRef = push(ref(db, path.movements()));
+    await set(mvRef, mv);
+  }
+}
+
+function resolveIngredientId(name, hintId) {
+  if (hintId && _ingredients[hintId]) return hintId;
+  return Object.entries(_ingredients)
+    .find(([,v]) => v.name?.toLowerCase() === (name||'').toLowerCase())?.[0] || null;
+}
+
+// ══════════════════════════════════════════════════════
+// POS WEBHOOK PREVIEW
+// ══════════════════════════════════════════════════════
+window.showPOSInfo = function() {
+  document.getElementById('modal-pos').style.display = 'flex';
+};
+window.closePOSModal = function() {
+  document.getElementById('modal-pos').style.display = 'none';
+};
+
+// ══════════════════════════════════════════════════════
+// РЕНДЕР
+// ══════════════════════════════════════════════════════
+function renderAll() {
+  renderStats();
+  renderSalesTable();
+  renderCharts();
+  renderTopDishes();
+}
+
+function getFilteredSales() {
+  const dateFrom = document.getElementById('filter-from')?.value;
+  const dateTo   = document.getElementById('filter-to')?.value;
+  const search   = (document.getElementById('filter-search')?.value||'').toLowerCase();
+
+  return _sales.filter(s => {
+    if (dateFrom && s.date < dateFrom) return false;
+    if (dateTo   && s.date > dateTo)   return false;
+    if (search && !s.items?.some(i=>i.recipe_name?.toLowerCase().includes(search))) return false;
+    return true;
+  });
+}
+
+function renderStats() {
+  const filtered = getFilteredSales();
+  const totalRev    = filtered.reduce((s,i)=>s+(i.totals?.total_revenue||0),0);
+  const totalCost   = filtered.reduce((s,i)=>s+(i.totals?.total_cost||0),0);
+  const totalProfit = totalRev - totalCost;
+  const margin      = totalRev>0 ? (totalProfit/totalRev*100).toFixed(1) : '0';
+  const totalPort   = filtered.reduce((s,i)=>s+(i.totals?.total_portions||0),0);
+  const avgCheck    = filtered.length ? (totalRev/filtered.length).toFixed(2) : '0';
+
+  document.getElementById('stat-revenue').textContent  = fmtMoney(totalRev);
+  document.getElementById('stat-cost').textContent     = fmtMoney(totalCost);
+  document.getElementById('stat-profit').textContent   = fmtMoney(totalProfit);
+  document.getElementById('stat-margin').textContent   = margin+'%';
+  document.getElementById('stat-count').textContent    = filtered.length;
+  document.getElementById('stat-portions').textContent = totalPort;
+  document.getElementById('stat-avg').textContent      = fmtMoney(+avgCheck);
+}
+
+function renderSalesTable() {
+  const filtered = getFilteredSales();
+  const tbody = document.getElementById('sales-tbody');
+  tbody.innerHTML = '';
+
+  if (!filtered.length) {
+    tbody.innerHTML = `<tr><td colspan="8"
+      style="text-align:center;color:var(--muted);font-family:var(--mono);font-size:12px;padding:32px">
+      ${_sales.length ? 'Ничего не найдено по фильтрам' : 'Продаж пока нет — добавь первую'}
+    </td></tr>`;
+    return;
+  }
+
+  filtered.forEach(sale => {
+    const dt = sale.date || sale.timestamp?.slice(0,10) || '—';
+    const src = sale.source==='manual' ? '✏️' :
+                sale.pos_system==='iiko' ? '🟢 iiko' :
+                sale.pos_system==='poster' ? '🔵 Poster' : '—';
+    const wo = sale.write_off_triggered ? '✅' : '—';
+    const margin = sale.totals?.margin_pct||0;
+    const marginColor = margin>=50?'var(--green)':margin>=30?'var(--gold)':'var(--red)';
+
+    const dishList = (sale.items||[])
+      .slice(0,3).map(i=>`${i.recipe_name} ×${i.portions_sold}`).join(', ')
+      + (sale.items?.length>3 ? ` +${sale.items.length-3}` : '');
+
+    const tr = document.createElement('tr');
+    tr.style.cursor = 'pointer';
+    tr.onclick = () => openSaleDetail(sale._key);
+    tr.innerHTML = `
+      <td style="font-family:var(--mono);font-size:12px;color:var(--muted)">${dt}</td>
+      <td style="font-size:12px">${dishList}</td>
+      <td style="text-align:center;font-size:12px">${sale.totals?.total_portions||0}</td>
+      <td class="num money">${fmtMoney(sale.totals?.total_revenue||0)}</td>
+      <td class="num" style="color:var(--red)">${fmtMoney(sale.totals?.total_cost||0)}</td>
+      <td class="num" style="color:var(--green)">${fmtMoney(sale.totals?.gross_profit||0)}</td>
+      <td class="num" style="color:${marginColor}">${margin}%</td>
+      <td class="c">${src} ${wo}</td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+// ══════════════════════════════════════════════════════
+// ДЕТАЛЬНЫЙ ПРОСМОТР ПРОДАЖИ
+// ══════════════════════════════════════════════════════
+window.openSaleDetail = function(key) {
+  const sale = _sales.find(s=>s._key===key);
+  if (!sale) return;
+
+  const dt = new Date(sale.timestamp).toLocaleString('ru-RU');
+  const src = sale.source==='manual' ? '✏️ Ручной ввод' :
+              sale.pos_system ? sale.pos_system.toUpperCase() : '—';
+
+  const rows = (sale.items||[]).map((item,i) => {
+    const margin = item.revenue>0
+      ? ((item.revenue-item.cost_total)/item.revenue*100).toFixed(1) : '—';
+    return `<tr>
+      <td class="c">${i+1}</td>
+      <td>${item.recipe_name}</td>
+      <td class="c">${item.portions_sold}</td>
+      <td class="num">${item.price_per_unit?.toFixed(2)||'—'}</td>
+      <td class="num money">${item.revenue?.toFixed(2)||'0'}</td>
+      <td class="num" style="color:var(--red)">${item.cost_total?.toFixed(2)||'0'}</td>
+      <td class="num" style="color:var(--green)">${(item.revenue-item.cost_total).toFixed(2)}</td>
+      <td class="num">${margin}%</td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('detail-content').innerHTML = `
+    <div class="detail-meta">
+      <div><span class="dm-label">Дата</span><span>${dt}</span></div>
+      <div><span class="dm-label">Источник</span><span>${src}</span></div>
+      <div><span class="dm-label">Точка</span><span>${sale.outlet_id||'—'}</span></div>
+      <div><span class="dm-label">Списание склада</span><span>${sale.write_off_triggered?'✅ Да':'— Нет'}</span></div>
+      ${sale.note?`<div style="grid-column:1/-1"><span class="dm-label">Примечание</span><span>${sale.note}</span></div>`:''}
+    </div>
+
+    <table style="margin:16px 0">
+      <thead>
+        <tr>
+          <th>№</th><th style="text-align:left">Блюдо</th>
+          <th>Кол-во</th><th style="text-align:right">Цена/ед</th>
+          <th style="text-align:right">Выручка</th>
+          <th style="text-align:right">Себест.</th>
+          <th style="text-align:right">Прибыль</th>
+          <th style="text-align:right">Маржа</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+
+    <div class="detail-totals">
+      <div class="dt-row">
+        <span>Выручка</span>
+        <span class="money">${fmtMoney(sale.totals?.total_revenue||0)} ₽</span>
+      </div>
+      <div class="dt-row">
+        <span>Себестоимость</span>
+        <span style="color:var(--red)">${fmtMoney(sale.totals?.total_cost||0)} ₽</span>
+      </div>
+      <div class="dt-row total">
+        <span>Валовая прибыль</span>
+        <span style="color:var(--green)">${fmtMoney(sale.totals?.gross_profit||0)} ₽</span>
+      </div>
+      <div class="dt-row">
+        <span>Маржинальность</span>
+        <span style="color:var(--gold2)">${sale.totals?.margin_pct||0}%</span>
+      </div>
+    </div>`;
+
+  document.getElementById('modal-detail').style.display = 'flex';
+};
+
+window.closeDetailModal = function() {
+  document.getElementById('modal-detail').style.display = 'none';
+};
+
+// ══════════════════════════════════════════════════════
+// ТОП БЛЮД
+// ══════════════════════════════════════════════════════
+function renderTopDishes() {
+  const filtered = getFilteredSales();
+  const agg = {};
+
+  filtered.forEach(sale => {
+    (sale.items||[]).forEach(item => {
+      if (!agg[item.recipe_id]) {
+        agg[item.recipe_id] = {
+          name:     item.recipe_name,
+          portions: 0,
+          revenue:  0,
+          cost:     0,
+        };
+      }
+      agg[item.recipe_id].portions += item.portions_sold||0;
+      agg[item.recipe_id].revenue  += item.revenue||0;
+      agg[item.recipe_id].cost     += item.cost_total||0;
+    });
+  });
+
+  const sorted = Object.values(agg).sort((a,b)=>b.revenue-a.revenue).slice(0,10);
+  const maxRev = sorted[0]?.revenue||1;
+  const container = document.getElementById('top-dishes');
+
+  if (!sorted.length) {
+    container.innerHTML = '<div style="color:var(--muted);font-family:var(--mono);font-size:12px;padding:20px 0">Нет данных</div>';
+    return;
+  }
+
+  container.innerHTML = sorted.map((d,i) => {
+    const margin = d.revenue>0 ? ((d.revenue-d.cost)/d.revenue*100).toFixed(1) : '0';
+    const barW   = (d.revenue/maxRev*100).toFixed(1);
+    const barColor = margin>=50 ? 'var(--green)' : margin>=30 ? 'var(--gold)' : 'var(--red)';
+    return `<div class="top-dish-row">
+      <div class="top-dish-num">${i+1}</div>
+      <div class="top-dish-info">
+        <div class="top-dish-name">${d.name}</div>
+        <div class="top-dish-bar-wrap">
+          <div class="top-dish-bar" style="width:${barW}%;background:${barColor}"></div>
+        </div>
+      </div>
+      <div class="top-dish-stats">
+        <span class="money">${fmtMoney(d.revenue)} ₽</span>
+        <span style="color:var(--muted);font-size:11px">${d.portions} шт</span>
+        <span style="color:${barColor};font-size:11px">${margin}%</span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ══════════════════════════════════════════════════════
+// МИНИ-ГРАФИКИ (SVG)
+// ══════════════════════════════════════════════════════
+function renderCharts() {
+  const filtered = getFilteredSales().slice().reverse(); // хронологический порядок
+  if (filtered.length < 2) {
+    document.getElementById('chart-revenue').innerHTML =
+      '<div style="color:var(--muted);font-family:var(--mono);font-size:11px;padding:30px;text-align:center">Недостаточно данных</div>';
+    return;
+  }
+
+  // Группируем по дате
+  const byDate = {};
+  filtered.forEach(s => {
+    const d = s.date || s.timestamp?.slice(0,10);
+    if (!byDate[d]) byDate[d] = { rev:0, cost:0, profit:0 };
+    byDate[d].rev    += s.totals?.total_revenue||0;
+    byDate[d].cost   += s.totals?.total_cost||0;
+    byDate[d].profit += s.totals?.gross_profit||0;
+  });
+
+  const dates  = Object.keys(byDate).sort();
+  const revs   = dates.map(d=>byDate[d].rev);
+  const profits= dates.map(d=>byDate[d].profit);
+
+  document.getElementById('chart-revenue').innerHTML  = buildSVGChart(dates, revs, '#c8a84b', 'Выручка по дням');
+  document.getElementById('chart-profit').innerHTML   = buildSVGChart(dates, profits, '#5a8c64', 'Прибыль по дням');
+}
+
+function buildSVGChart(labels, values, color, title) {
+  const W=600, H=120, pad=30, n=values.length;
+  if (!n) return '';
+  const maxV = Math.max(...values,1);
+  const pts   = values.map((v,i)=>{
+    const x = pad + (i/(n-1||1))*(W-pad*2);
+    const y = H - pad - (v/maxV)*(H-pad*2);
+    return `${x},${y}`;
+  }).join(' ');
+  const fillPts = `${pad},${H-pad} ` + pts + ` ${W-pad},${H-pad}`;
+  const lastV = values[values.length-1];
+  const lastX = W-pad, lastY = H - pad - (lastV/maxV)*(H-pad*2);
+
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block">
+    <defs>
+      <linearGradient id="g${color.replace('#','')}" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="${color}" stop-opacity=".3"/>
+        <stop offset="100%" stop-color="${color}" stop-opacity="0"/>
+      </linearGradient>
+    </defs>
+    <polygon points="${fillPts}" fill="url(#g${color.replace('#','')})" />
+    <polyline points="${pts}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+    <circle cx="${lastX}" cy="${lastY}" r="4" fill="${color}"/>
+    <text x="${lastX+6}" y="${lastY+4}" font-family="DM Mono,monospace" font-size="10" fill="${color}">${fmtMoney(lastV)}</text>
+    <text x="${pad}" y="14" font-family="DM Mono,monospace" font-size="10" fill="#7a7260" letter-spacing="1">${title.toUpperCase()}</text>
+    ${labels.length<=10 ? labels.map((l,i)=>{
+      const x=pad+(i/(n-1||1))*(W-pad*2);
+      return `<text x="${x}" y="${H-4}" font-family="DM Mono,monospace" font-size="9" fill="#7a7260" text-anchor="middle">${l.slice(5)}</text>`;
+    }).join('') : ''}
+  </svg>`;
+}
+
+// ══════════════════════════════════════════════════════
+// ЭКСПОРТ
+// ══════════════════════════════════════════════════════
+window.exportCSV = function() {
+  const filtered = getFilteredSales();
+  let csv = 'Дата,Блюдо,Кол-во,Цена/ед,Выручка,Себестоимость,Прибыль,Маржа%\n';
+  filtered.forEach(sale => {
+    (sale.items||[]).forEach(item => {
+      const margin = item.revenue>0
+        ? ((item.revenue-item.cost_total)/item.revenue*100).toFixed(1) : '0';
+      csv += [
+        sale.date,
+        `"${item.recipe_name}"`,
+        item.portions_sold,
+        item.price_per_unit?.toFixed(2)||'0',
+        item.revenue?.toFixed(2)||'0',
+        item.cost_total?.toFixed(2)||'0',
+        (item.revenue-item.cost_total).toFixed(2),
+        margin,
+      ].join(',') + '\n';
+    });
+  });
+  downloadFile(csv, `pyra_sales_${todayStr()}.csv`, 'text/csv');
+};
+
+window.exportJSON = function() {
+  const filtered = getFilteredSales();
+  downloadFile(JSON.stringify(filtered,null,2), `pyra_sales_${todayStr()}.json`, 'application/json');
+};
+
+function downloadFile(content, name, mime) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([content],{type:mime}));
+  a.download = name; a.click();
+}
+
+// ══════════════════════════════════════════════════════
+// HELPERS
+// ══════════════════════════════════════════════════════
+window.applyFilters  = () => renderAll();
+window.resetFilters  = () => {
+  document.getElementById('filter-from').value   = '';
+  document.getElementById('filter-to').value     = '';
+  document.getElementById('filter-search').value = '';
+  renderAll();
+};
+
+function todayStr() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+function fmtMoney(n) { return (+n||0).toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+
+function showMsg(id, text, type) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = text;
+  el.style.color   = type==='success' ? '#5a8c64' : '#c0504a';
+  el.style.display = 'block';
+  setTimeout(()=>el.style.display='none', 6000);
+}
+
+window.toggleTheme = function() {
+  const light = document.documentElement.classList.toggle('light');
+  document.getElementById('btn-dark').classList.toggle('active',!light);
+  document.getElementById('btn-light').classList.toggle('active',light);
+};
+
+window.switchTab = function(tab, btn) {
+  document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
+  document.querySelectorAll('.tab-panel').forEach(p=>p.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('tab-'+tab).classList.add('active');
+};
+
+// Авто-логин
+(function() {
+  const u = localStorage.getItem('pyra_username');
+  if (u) {
+    document.getElementById('s-username').value = u;
+    document.getElementById('s-outlet').value   = localStorage.getItem('pyra_outlet')||'main';
+  }
+})();
+
+// Закрыть модалки по фону
+document.addEventListener('DOMContentLoaded', () => {
+  document.querySelectorAll('.modal-overlay').forEach(m => {
+    m.addEventListener('click', e => { if(e.target===m) m.style.display='none'; });
+  });
+});
+</script>
+
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0f0e0b;--paper:#1a1812;--card:#201e18;--border:#2e2b22;
+  --gold:#c8a84b;--gold2:#e8cc78;--gold3:#f5e4a8;
+  --cream:#e8dfc8;--muted:#7a7260;--red:#c0504a;--green:#5a8c64;--blue:#4a7a9b;
+  --text:#d4cbb8;
+  --serif:'Cormorant Garamond',Georgia,serif;
+  --mono:'DM Mono',monospace;
+}
+:root.light{
+  --bg:#f5f0e8;--paper:#ede7d9;--card:#e8e1d0;--border:#cfc6b0;
+  --gold:#9a7830;--gold2:#7a5e1e;--gold3:#5a4210;
+  --cream:#2c2410;--muted:#8a7f6a;--red:#b03030;--green:#3a6e44;--text:#3a3220;
+}
+body{background:var(--bg);color:var(--text);font-family:var(--serif);min-height:100vh;padding-bottom:80px;transition:background .3s,color .3s}
+
+/* HEADER */
+header{text-align:center;padding:50px 24px 32px;border-bottom:1px solid var(--border);position:relative}
+header::before{content:'';position:absolute;inset:0;background:radial-gradient(ellipse 60% 80% at 50% 0%,rgba(200,168,75,.07) 0%,transparent 70%);pointer-events:none}
+.logo-line{display:flex;align-items:center;justify-content:center;gap:16px;margin-bottom:8px}
+.logo-diamond{width:7px;height:7px;background:var(--gold);transform:rotate(45deg);flex-shrink:0}
+h1{font-size:clamp(22px,4vw,40px);font-weight:300;letter-spacing:.06em;color:var(--gold2);line-height:1}
+.subtitle{font-size:11px;font-family:var(--mono);letter-spacing:.2em;color:var(--muted);text-transform:uppercase;margin-top:6px}
+.gost-badge{display:inline-block;margin-top:10px;font-family:var(--mono);font-size:10px;letter-spacing:.12em;color:var(--gold);border:1px solid rgba(200,168,75,.3);padding:3px 10px;border-radius:2px}
+
+/* NAV */
+.top-nav{display:flex;justify-content:center;gap:8px;padding:16px 24px;border-bottom:1px solid var(--border);flex-wrap:wrap}
+.nav-link{font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);text-decoration:none;padding:5px 12px;border:1px solid transparent;border-radius:2px;transition:all .15s}
+.nav-link:hover{color:var(--gold);border-color:rgba(200,168,75,.3)}
+.nav-link.active{color:var(--gold2);border-color:var(--gold)}
+
+/* LAYOUT */
+.main{max-width:1100px;margin:0 auto;padding:28px 20px 0;display:flex;flex-direction:column;gap:20px}
+
+/* LOGIN BAR */
+.login-bar{background:var(--card);border:1px solid var(--border);border-radius:2px;padding:16px 20px;display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap}
+.login-bar label{font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);display:block;margin-bottom:4px}
+
+/* STATS */
+.stats-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:10px}
+.stat-card{background:var(--card);border:1px solid var(--border);border-radius:2px;padding:14px 16px}
+.stat-label{font-family:var(--mono);font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:5px}
+.stat-value{font-family:var(--mono);font-size:18px;color:var(--gold2);line-height:1.2}
+.stat-value.green{color:var(--green)}
+.stat-value.red  {color:var(--red)}
+
+/* SECTION */
+.section{background:var(--card);border:1px solid var(--border);border-radius:2px;overflow:hidden}
+.section-header{display:flex;align-items:center;gap:12px;padding:13px 18px;border-bottom:1px solid var(--border);background:var(--paper)}
+.sec-title{font-size:15px;font-weight:400;color:var(--cream);flex:1;letter-spacing:.03em}
+
+/* TOOLBAR */
+.toolbar{display:flex;gap:10px;align-items:center;padding:12px 18px;border-bottom:1px solid var(--border);flex-wrap:wrap;background:var(--paper)}
+.toolbar input,.toolbar select{background:var(--bg);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:12px;padding:6px 10px;border-radius:1px;outline:none;transition:border-color .15s}
+.toolbar input:focus,.toolbar select:focus{border-color:var(--gold)}
+
+/* TABLE */
+.table-wrap{overflow-x:auto;max-height:480px;overflow-y:auto}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{font-family:var(--mono);font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);padding:8px 12px;text-align:left;border-bottom:1px solid var(--border);white-space:nowrap;background:var(--paper);position:sticky;top:0;z-index:1}
+td{padding:9px 12px;border-bottom:1px solid var(--border);vertical-align:middle}
+tr:hover td{background:rgba(200,168,75,.03)}
+td.num{text-align:right;font-family:var(--mono);font-size:12px}
+td.c{text-align:center}
+.money{color:var(--gold2)}
+
+/* TABS */
+.tab-bar{display:flex;border-bottom:1px solid var(--border);background:var(--paper)}
+.tab-btn{font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;padding:11px 18px;border:none;background:none;color:var(--muted);cursor:pointer;border-bottom:2px solid transparent;transition:all .15s}
+.tab-btn:hover{color:var(--text)}
+.tab-btn.active{color:var(--gold2);border-bottom-color:var(--gold)}
+.tab-panel{display:none}
+.tab-panel.active{display:block}
+
+/* CHARTS */
+.charts-grid{display:grid;grid-template-columns:1fr 1fr;gap:0;border-top:1px solid var(--border)}
+.chart-box{padding:16px 20px;border-right:1px solid var(--border)}
+.chart-box:last-child{border-right:none}
+
+/* TOP DISHES */
+.top-dish-row{display:grid;grid-template-columns:28px 1fr auto;gap:10px;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)}
+.top-dish-row:last-child{border-bottom:none}
+.top-dish-num{font-family:var(--mono);font-size:11px;color:var(--gold);text-align:center}
+.top-dish-name{font-size:14px;color:var(--cream);margin-bottom:4px}
+.top-dish-bar-wrap{height:4px;background:var(--border);border-radius:2px;overflow:hidden}
+.top-dish-bar{height:100%;border-radius:2px;transition:width .4s}
+.top-dish-stats{display:flex;flex-direction:column;align-items:flex-end;gap:2px;font-family:var(--mono);font-size:12px}
+
+/* MODAL */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:1000;display:none;align-items:center;justify-content:center;padding:20px}
+.modal-box{background:var(--card);border:1px solid var(--border);border-radius:2px;width:100%;max-width:640px;max-height:92vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+.modal-box.wide{max-width:820px}
+.modal-header{display:flex;justify-content:space-between;align-items:center;padding:15px 20px;border-bottom:1px solid var(--border);background:var(--paper);position:sticky;top:0;z-index:10}
+.modal-title{font-size:16px;color:var(--cream);font-weight:400;letter-spacing:.03em}
+.modal-close{background:none;border:none;color:var(--muted);font-size:20px;cursor:pointer;padding:0 4px;line-height:1;transition:color .15s}
+.modal-close:hover{color:var(--red)}
+.modal-body{padding:20px}
+.modal-footer{padding:14px 20px;border-top:1px solid var(--border);display:flex;gap:10px;justify-content:flex-end;position:sticky;bottom:0;background:var(--card);z-index:10}
+
+/* FORM */
+.form-group{margin-bottom:14px}
+.form-label{font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);display:block;margin-bottom:4px}
+.form-input{width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:13px;padding:7px 10px;border-radius:1px;outline:none;transition:border-color .15s;-moz-appearance:textfield}
+.form-input::-webkit-inner-spin-button,.form-input::-webkit-outer-spin-button{-webkit-appearance:none}
+.form-input:focus{border-color:var(--gold);color:var(--cream)}
+
+/* SALE ROW IN MODAL */
+.sale-row{display:grid;grid-template-columns:1fr 80px 100px 80px 28px;gap:8px;align-items:center;margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid var(--border)}
+.sale-row:last-child{border-bottom:none;margin-bottom:0}
+.btn-del{background:none;border:none;color:var(--muted);cursor:pointer;font-size:18px;padding:2px 4px;transition:color .15s;line-height:1}
+.btn-del:hover{color:var(--red)}
+
+/* PREVIEW */
+.preview-row{display:grid;grid-template-columns:1fr auto auto auto auto;gap:10px;align-items:center;padding:5px 0;font-size:13px;border-bottom:1px solid var(--border)}
+.preview-total{margin-top:10px;padding:12px;background:var(--paper);border:1px solid var(--border);border-radius:1px;display:grid;grid-template-columns:1fr auto;gap:6px;font-family:var(--mono);font-size:12px}
+.preview-total .total{font-size:16px;color:var(--gold3)}
+
+/* DETAIL */
+.detail-meta{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px;padding:14px;background:var(--paper);border:1px solid var(--border);border-radius:1px;font-size:13px}
+.dm-label{font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-right:8px}
+.detail-totals{background:var(--paper);border:1px solid var(--border);border-radius:1px;padding:14px;margin-top:12px}
+.dt-row{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border);font-size:13px;font-family:var(--mono)}
+.dt-row:last-child{border-bottom:none}
+.dt-row.total{font-size:15px;padding-top:8px;margin-top:4px}
+
+/* POS INFO */
+.pos-block{background:var(--paper);border:1px solid var(--border);border-radius:2px;padding:16px;margin-bottom:14px}
+.pos-title{font-family:var(--mono);font-size:10px;letter-spacing:.15em;text-transform:uppercase;color:var(--gold);margin-bottom:10px}
+.pos-code{background:var(--bg);border:1px solid var(--border);border-radius:1px;padding:12px;font-family:var(--mono);font-size:11px;color:var(--muted);line-height:1.7;overflow-x:auto;white-space:pre}
+.pos-badge{display:inline-block;font-family:var(--mono);font-size:9px;letter-spacing:.1em;padding:2px 8px;border-radius:2px;margin-right:6px;margin-bottom:4px}
+.pos-badge.ready{background:rgba(90,140,100,.15);color:var(--green);border:1px solid rgba(90,140,100,.3)}
+.pos-badge.soon{background:rgba(200,168,75,.1);color:var(--gold);border:1px solid rgba(200,168,75,.3)}
+
+/* MISC */
+.action-btn{background:none;border:1px solid var(--gold);color:var(--gold);font-family:var(--mono);font-size:10px;letter-spacing:.08em;padding:6px 14px;cursor:pointer;border-radius:1px;transition:all .15s;white-space:nowrap}
+.action-btn:hover{background:rgba(200,168,75,.15);color:var(--gold2)}
+.action-btn.green{border-color:var(--green);color:var(--green)}
+.action-btn.green:hover{background:rgba(90,140,100,.15)}
+.action-btn.blue{border-color:var(--blue);color:var(--blue)}
+.action-btn.blue:hover{background:rgba(74,122,155,.15)}
+.btn-cancel{background:none;border:1px solid var(--border);color:var(--muted);padding:9px 18px;font-family:var(--mono);font-size:11px;letter-spacing:.1em;cursor:pointer;border-radius:1px;transition:all .15s}
+.btn-cancel:hover{border-color:var(--muted);color:var(--text)}
+.btn-primary{background:var(--gold);color:#0f0e0b;border:none;padding:9px 20px;font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;cursor:pointer;border-radius:1px;transition:background .15s}
+.btn-primary:hover{background:var(--gold2)}
+.info-block{background:var(--paper);border-left:3px solid var(--gold);padding:10px 14px;font-size:12px;font-family:var(--mono);color:var(--muted);line-height:1.6;border-radius:0 2px 2px 0}
+.checkbox-row{display:flex;align-items:center;gap:10px;font-size:14px;cursor:pointer;margin-top:10px}
+.checkbox-row input{width:16px;height:16px;accent-color:var(--gold);cursor:pointer}
+
+/* THEME */
+.theme-toggle{position:fixed;top:18px;right:18px;z-index:100;background:var(--card);border:1px solid var(--border);border-radius:40px;padding:4px;display:flex;align-items:center;gap:2px;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.2)}
+.theme-btn{width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:15px;user-select:none;transition:background .2s}
+.theme-btn.active{background:var(--gold)}
+.theme-btn:not(.active){opacity:.4}
+#login-hint{font-family:var(--mono);font-size:12px;color:var(--muted);text-align:center;padding:40px;border:1px dashed var(--border);border-radius:2px;background:var(--card)}
+#workspace{display:none}
+
+/* FOOTER */
+.footer{text-align:center;padding:48px 24px 0;font-family:var(--mono);font-size:10px;letter-spacing:.18em;color:var(--muted);text-transform:uppercase}
+.footer-brand{font-size:13px;color:var(--gold);letter-spacing:.3em;margin-bottom:4px}
+.footer a{color:var(--muted);text-decoration:none}
+.footer a:hover{color:var(--gold)}
+
+@media(max-width:800px){
+  .stats-grid{grid-template-columns:repeat(3,1fr)}
+  .charts-grid{grid-template-columns:1fr}
+  .chart-box{border-right:none;border-bottom:1px solid var(--border)}
+  .sale-row{grid-template-columns:1fr 70px 90px 70px 28px}
+  .detail-meta{grid-template-columns:1fr}
+}
+@media(max-width:500px){
+  .stats-grid{grid-template-columns:1fr 1fr}
+  .sale-row{grid-template-columns:1fr 60px 80px 28px}
+}
+</style>
+</head>
+<body>
+
+<div class="theme-toggle" onclick="toggleTheme()">
+  <div class="theme-btn active" id="btn-dark">🌙</div>
+  <div class="theme-btn" id="btn-light">☀️</div>
+</div>
+
+<header>
+  <div class="logo-line">
+    <div class="logo-diamond"></div>
+    <h1>Продажи</h1>
+    <div class="logo-diamond"></div>
+  </div>
+  <p class="subtitle">Выручка · Маржа · Себестоимость · POS-интеграция</p>
+  <div class="gost-badge">PYRA Sales v1.0</div>
+</header>
+
+<nav class="top-nav">
+  <a href="bakery-calc.html"   class="nav-link">◇ Кондитерский</a>
+  <a href="catering-calc.html" class="nav-link">◇ Общепит</a>
+  <a href="ttk-generator.html" class="nav-link">◇ Генератор ТТК</a>
+  <a href="stock.html"         class="nav-link">◇ Склад</a>
+  <a href="sales.html"         class="nav-link active">◆ Продажи</a>
+</nav>
+
+<div class="main">
+
+  <!-- LOGIN -->
+  <div class="login-bar">
+    <div>
+      <label>Telegram username</label>
+      <input type="text" id="s-username" placeholder="username (без @)"
+        style="width:180px;background:var(--bg);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:13px;padding:7px 10px;border-radius:1px;outline:none">
+    </div>
+    <div>
+      <label>Точка / Outlet</label>
+      <input type="text" id="s-outlet" placeholder="main"
+        style="width:110px;background:var(--bg);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:13px;padding:7px 10px;border-radius:1px;outline:none">
+    </div>
+    <button class="action-btn" id="load-btn" onclick="initSales()">◆ Загрузить</button>
+    <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
+      <button class="action-btn green" onclick="openSaleModal()">+ Новая продажа</button>
+      <button class="action-btn blue"  onclick="showPOSInfo()">⚡ POS интеграция</button>
+    </div>
+    <div id="main-msg" style="display:none;font-family:var(--mono);font-size:12px;width:100%"></div>
+  </div>
+
+  <div id="login-hint">Введи Telegram username и нажми «Загрузить»</div>
+
+  <div id="workspace">
+
+    <!-- СТАТИСТИКА -->
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-label">Выручка</div>
+        <div class="stat-value" id="stat-revenue">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Себестоимость</div>
+        <div class="stat-value red" id="stat-cost">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Валовая прибыль</div>
+        <div class="stat-value green" id="stat-profit">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Маржинальность</div>
+        <div class="stat-value" id="stat-margin">0%</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Сессий продаж</div>
+        <div class="stat-value" id="stat-count">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Порций продано</div>
+        <div class="stat-value" id="stat-portions">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Ср. чек / сессия</div>
+        <div class="stat-value" id="stat-avg">0</div>
+      </div>
+    </div>
+
+    <!-- ФИЛЬТРЫ -->
+    <div class="section">
+      <div class="section-header">
+        <span class="sec-title">Фильтры и аналитика</span>
+        <div style="display:flex;gap:8px">
+          <button class="action-btn" onclick="exportCSV()">↓ CSV</button>
+          <button class="action-btn" onclick="exportJSON()">↓ JSON</button>
+        </div>
+      </div>
+
+      <div class="tab-bar">
+        <button class="tab-btn active" onclick="switchTab('list',this)">Список продаж</button>
+        <button class="tab-btn" onclick="switchTab('charts',this)">Графики</button>
+        <button class="tab-btn" onclick="switchTab('top',this)">Топ блюд</button>
+      </div>
+
+      <!-- СПИСОК -->
+      <div class="tab-panel active" id="tab-list">
+        <div class="toolbar">
+          <div>
+            <span style="font-family:var(--mono);font-size:10px;color:var(--muted);margin-right:6px">С</span>
+            <input type="date" id="filter-from">
+          </div>
+          <div>
+            <span style="font-family:var(--mono);font-size:10px;color:var(--muted);margin-right:6px">По</span>
+            <input type="date" id="filter-to">
+          </div>
+          <input type="text" id="filter-search" placeholder="Поиск по блюду…" style="width:180px">
+          <button class="action-btn" onclick="applyFilters()">Применить</button>
+          <button class="action-btn" onclick="resetFilters()" style="border-color:var(--border);color:var(--muted)">Сбросить</button>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Дата</th>
+                <th>Блюда</th>
+                <th style="text-align:center">Порций</th>
+                <th style="text-align:right">Выручка, ₽</th>
+                <th style="text-align:right">Себест., ₽</th>
+                <th style="text-align:right">Прибыль, ₽</th>
+                <th style="text-align:right">Маржа</th>
+                <th style="text-align:center">Источник</th>
+              </tr>
+            </thead>
+            <tbody id="sales-tbody">
+              <tr><td colspan="8" style="text-align:center;color:var(--muted);font-family:var(--mono);font-size:12px;padding:32px">
+                Загрузи данные
+              </td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- ГРАФИКИ -->
+      <div class="tab-panel" id="tab-charts">
+        <div class="charts-grid">
+          <div class="chart-box">
+            <div id="chart-revenue"></div>
+          </div>
+          <div class="chart-box">
+            <div id="chart-profit"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ТОП БЛЮД -->
+      <div class="tab-panel" id="tab-top">
+        <div style="padding:16px 20px">
+          <div style="font-family:var(--mono);font-size:9px;letter-spacing:.2em;text-transform:uppercase;color:var(--gold);margin-bottom:14px">
+            Топ блюд по выручке
+          </div>
+          <div id="top-dishes"></div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /workspace -->
+</div><!-- /main -->
+
+<!-- ══════════════════════════════════════════════ -->
+<!-- МОДАЛКА: НОВАЯ ПРОДАЖА -->
+<!-- ══════════════════════════════════════════════ -->
+<div class="modal-overlay" id="modal-sale">
+  <div class="modal-box wide">
+    <div class="modal-header">
+      <span class="modal-title">+ Новая продажа</span>
+      <button class="modal-close" onclick="closeSaleModal()">×</button>
+    </div>
+    <div class="modal-body">
+
+      <div class="info-block" style="margin-bottom:16px">
+        Выбери блюда и укажи количество проданных порций. Цена подставляется из рецепта. После сохранения — опционально списание со склада.
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
+        <div class="form-group" style="margin:0">
+          <label class="form-label">Дата продажи</label>
+          <input class="form-input" type="date" id="sale-date">
+        </div>
+        <div class="form-group" style="margin:0">
+          <label class="form-label">Примечание</label>
+          <input class="form-input" type="text" id="sale-note" placeholder="Смена, событие…">
+        </div>
+      </div>
+
+      <!-- ЗАГОЛОВОК СТРОК -->
+      <div style="display:grid;grid-template-columns:1fr 80px 100px 80px 28px;gap:8px;padding-bottom:6px;border-bottom:1px solid var(--border);margin-bottom:8px">
+        <span style="font-family:var(--mono);font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)">Блюдо</span>
+        <span style="font-family:var(--mono);font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);text-align:center">Кол-во</span>
+        <span style="font-family:var(--mono);font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);text-align:right">Цена ₽/шт</span>
+        <span style="font-family:var(--mono);font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);text-align:right">Сумма</span>
+        <span></span>
+      </div>
+
+      <div id="sale-rows-container"></div>
+
+      <button onclick="addSaleRow()"
+        style="margin-top:8px;background:none;border:1px dashed var(--border);color:var(--muted);font-family:var(--mono);font-size:11px;letter-spacing:.1em;padding:7px 14px;cursor:pointer;transition:all .15s;border-radius:1px;width:100%"
+        onmouseover="this.style.borderColor='var(--gold)';this.style.color='var(--gold)'"
+        onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--muted)'">
+        + Добавить блюдо
+      </button>
+
+      <!-- ПРЕВЬЮ -->
+      <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border)">
+        <div style="font-family:var(--mono);font-size:9px;letter-spacing:.15em;text-transform:uppercase;color:var(--muted);margin-bottom:8px">Предварительный расчёт</div>
+        <div id="sale-preview"></div>
+      </div>
+
+      <!-- АВТО-СПИСАНИЕ -->
+      <label class="checkbox-row" style="margin-top:14px;padding:10px 12px;background:var(--paper);border:1px solid var(--border);border-radius:1px">
+        <input type="checkbox" id="sale-do-writeoff" checked>
+        <span>Автоматически списать ингредиенты со склада по нормам рецептур</span>
+      </label>
+
+      <div id="sale-modal-msg" style="display:none;font-family:var(--mono);font-size:11px;margin-top:10px"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-cancel" onclick="closeSaleModal()">Отмена</button>
+      <button class="btn-primary" id="save-sale-btn" onclick="saveSale()">◆ Сохранить продажу</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════ -->
+<!-- МОДАЛКА: ДЕТАЛИ ПРОДАЖИ -->
+<!-- ══════════════════════════════════════════════ -->
+<div class="modal-overlay" id="modal-detail">
+  <div class="modal-box wide">
+    <div class="modal-header">
+      <span class="modal-title">Детали продажи</span>
+      <button class="modal-close" onclick="closeDetailModal()">×</button>
+    </div>
+    <div class="modal-body" id="detail-content"></div>
+    <div class="modal-footer">
+      <button class="btn-cancel" onclick="closeDetailModal()">Закрыть</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════ -->
+<!-- МОДАЛКА: POS ИНТЕГРАЦИЯ -->
+<!-- ══════════════════════════════════════════════ -->
+<div class="modal-overlay" id="modal-pos">
+  <div class="modal-box wide">
+    <div class="modal-header">
+      <span class="modal-title">⚡ POS интеграция</span>
+      <button class="modal-close" onclick="closePOSModal()">×</button>
+    </div>
+    <div class="modal-body">
+
+      <div style="margin-bottom:16px">
+        <span class="pos-badge ready">✅ Webhook готов</span>
+        <span class="pos-badge soon">🕐 iiko — скоро</span>
+        <span class="pos-badge soon">🕐 Poster — скоро</span>
+        <span class="pos-badge soon">🕐 Эвотор — скоро</span>
+      </div>
+
+      <div class="pos-block">
+        <div class="pos-title">Как это работает</div>
+        <p style="font-size:13px;color:var(--text);line-height:1.7;margin-bottom:10px">
+          POS-система отправляет данные о продажах на endpoint PYRA. Система автоматически:
+          находит рецепт по маппингу, записывает продажу, списывает ингредиенты со склада.
+        </p>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;font-size:12px">
+          <div style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:1px">
+            <div style="font-family:var(--mono);font-size:9px;color:var(--gold);margin-bottom:6px">ШАГ 1</div>
+            POS продаёт блюдо
+          </div>
+          <div style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:1px">
+            <div style="font-family:var(--mono);font-size:9px;color:var(--gold);margin-bottom:6px">ШАГ 2</div>
+            Webhook → PYRA API
+          </div>
+          <div style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:1px">
+            <div style="font-family:var(--mono);font-size:9px;color:var(--gold);margin-bottom:6px">ШАГ 3</div>
+            Авто-списание склада
+          </div>
+        </div>
+      </div>
+
+      <div class="pos-block">
+        <div class="pos-title">Структура Webhook (POST /api/sales/pos-webhook)</div>
+        <div class="pos-code">{
+  "pos_system":        "iiko",
+  "pos_transaction_id":"txn_12345",
+  "outlet_id":         "main",
+  "timestamp":         "2025-06-01T13:45:00Z",
+  "items": [
+    {
+      "pos_dish_id":   "iiko_dish_001",
+      "dish_name":     "Борщ украинский",
+      "quantity":      3,
+      "price":         108.30,
+      "revenue":       324.90
+    }
+  ]
+}</div>
+      </div>
+
+      <div class="pos-block">
+        <div class="pos-title">Маппинг блюд POS → рецепты PYRA</div>
+        <p style="font-size:13px;color:var(--muted);font-family:var(--mono);line-height:1.7">
+          В каждом рецепте есть поле <code>pos_mapping</code>:
+        </p>
+        <div class="pos-code">"pos_mapping": {
+  "iiko_dish_id":      "iiko_dish_001",
+  "poster_product_id": null,
+  "custom_id":         null
+}</div>
+        <p style="font-size:12px;color:var(--muted);font-family:var(--mono);margin-top:8px">
+          При получении webhook — ищем рецепт по iiko_dish_id → применяем stock_write_off.per_portion × quantity
+        </p>
+      </div>
+
+      <div class="pos-block">
+        <div class="pos-title">Backend логика (Node.js / Firebase Functions)</div>
+        <div class="pos-code">// integrations/iiko.adapter.js
+class IikoAdapter {
+  normalize(webhookData) {
+    return {
+      source:             'pos',
+      pos_system:         'iiko',
+      pos_transaction_id: webhookData.id,
+      timestamp:          webhookData.dateTime,
+      items: webhookData.orderItems.map(item => ({
+        pos_dish_id:   item.productId,
+        recipe_id:     this.resolveRecipeId(item.productId),
+        recipe_name:   item.name,
+        portions_sold: item.quantity,
+        price_per_unit:item.price,
+        revenue:       item.sum,
+      }))
+    };
+  }
+  resolveRecipeId(posDishId) {
+    // Поиск по recipes[].pos_mapping.iiko_dish_id
+  }
+}</div>
+      </div>
+
+    </div>
+    <div class="modal-footer">
+      <button class="btn-cancel" onclick="closePOSModal()">Закрыть</button>
+    </div>
+  </div>
+</div>
+
+<div class="footer">
+  <div class="footer-brand">◆ PYRA ◆</div>
+  <div>Разработано <a href="https://anton67678.github.io/site-pira-network/" target="_blank">Pyramid Network</a></div>
+</div>
+
+</body>
+</html>

@@ -1,0 +1,1221 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Склад — PYRA</title>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,300;1,400&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+import { getDatabase, ref, get, set, push, update, onValue, query, orderByChild, limitToLast }
+  from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
+import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyCEWWRUKpJ2tJdsUkTfMTKTH7Lfmc9dZs0",
+  authDomain: "cenarecepta-calc.firebaseapp.com",
+  databaseURL: "https://cenarecepta-calc-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId: "cenarecepta-calc",
+  storageBucket: "cenarecepta-calc.firebasestorage.app",
+  messagingSenderId: "72447381131",
+  appId: "1:72447381131:web:dee8cf51dd3af8133d4e8e"
+};
+
+const app  = initializeApp(firebaseConfig);
+const db   = getDatabase(app);
+const auth = getAuth(app);
+signInAnonymously(auth).catch(console.error);
+
+// ── ГЛОБАЛЬНОЕ СОСТОЯНИЕ ──
+let _username  = '';
+let _outlet    = 'main';
+let _ingredients = {};  // справочник
+let _stock       = {};  // остатки
+let _movements   = [];  // последние движения
+
+// ── ПУТИ ──
+const path = {
+  ingredients: () => `ingredients/${_username}`,
+  ingredient:  (id) => `ingredients/${_username}/${id}`,
+  stock:       (id) => `stock/${_username}/${_outlet}/${id}`,
+  stockAll:    () => `stock/${_username}/${_outlet}`,
+  movements:   () => `stock_movements/${_username}/${_outlet}`,
+  movement:    (id) => `stock_movements/${_username}/${_outlet}/${id}`,
+};
+
+// ══════════════════════════════════════════════════
+// ИНИЦИАЛИЗАЦИЯ — загрузка данных
+// ══════════════════════════════════════════════════
+window.initStock = async function() {
+  _username = document.getElementById('s-username').value.trim().replace('@','');
+  _outlet   = document.getElementById('s-outlet').value.trim() || 'main';
+  if (!_username) { showMsg('main-msg','⚠️ Введи username','error'); return; }
+
+  localStorage.setItem('pyra_username', _username);
+  localStorage.setItem('pyra_outlet',   _outlet);
+
+  document.getElementById('workspace').style.display = 'block';
+  document.getElementById('login-hint').style.display = 'none';
+
+  await Promise.all([loadIngredients(), loadStock(), loadMovements()]);
+  renderAll();
+};
+
+// ── ЗАГРУЗКА СПРАВОЧНИКА ИНГРЕДИЕНТОВ ──
+async function loadIngredients() {
+  const snap = await get(ref(db, path.ingredients()));
+  _ingredients = snap.exists() ? snap.val() : {};
+}
+
+// ── ЗАГРУЗКА ОСТАТКОВ ──
+async function loadStock() {
+  const snap = await get(ref(db, path.stockAll()));
+  _stock = snap.exists() ? snap.val() : {};
+}
+
+// ── ЗАГРУЗКА ДВИЖЕНИЙ (последние 100) ──
+async function loadMovements() {
+  const snap = await get(ref(db, path.movements()));
+  if (snap.exists()) {
+    _movements = Object.entries(snap.val())
+      .map(([k,v]) => ({...v, _key: k}))
+      .sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp))
+      .slice(0, 100);
+  } else {
+    _movements = [];
+  }
+}
+
+// ══════════════════════════════════════════════════
+// ДОБАВИТЬ / РЕДАКТИРОВАТЬ ИНГРЕДИЕНТ В СПРАВОЧНИК
+// ══════════════════════════════════════════════════
+window.openIngModal = function(id = null) {
+  const modal = document.getElementById('modal-ing');
+  modal.style.display = 'flex';
+
+  if (id && _ingredients[id]) {
+    const ing = _ingredients[id];
+    document.getElementById('ing-modal-title').textContent = 'Редактировать ингредиент';
+    document.getElementById('ing-id').value          = id;
+    document.getElementById('ing-name').value        = ing.name||'';
+    document.getElementById('ing-category').value    = ing.category||'';
+    document.getElementById('ing-unit').value        = ing.unit||'г';
+    document.getElementById('ing-price').value       = ing.price_per_kg||'';
+    document.getElementById('ing-min').value         = ing.thresholds?.min_stock_g||'';
+    document.getElementById('ing-reorder').value     = ing.thresholds?.reorder_point_g||'';
+    document.getElementById('ing-supplier').value    = ing.supplier?.name||'';
+    document.getElementById('ing-supplier-tel').value= ing.supplier?.contact||'';
+    document.getElementById('ing-lead').value        = ing.supplier?.lead_time_days||'';
+    document.getElementById('ing-cal').value         = ing.kbju?.cal||'';
+    document.getElementById('ing-p').value           = ing.kbju?.p||'';
+    document.getElementById('ing-f').value           = ing.kbju?.f||'';
+    document.getElementById('ing-c').value           = ing.kbju?.c||'';
+  } else {
+    document.getElementById('ing-modal-title').textContent = 'Новый ингредиент';
+    document.getElementById('modal-ing-form').reset();
+    document.getElementById('ing-id').value = '';
+  }
+};
+
+window.closeIngModal = function() {
+  document.getElementById('modal-ing').style.display = 'none';
+};
+
+window.saveIngredient = async function() {
+  const id   = document.getElementById('ing-id').value.trim();
+  const name = document.getElementById('ing-name').value.trim();
+  if (!name) { showMsg('ing-modal-msg','⚠️ Введи название','error'); return; }
+
+  const finalId = id || 'ing_' + name.toLowerCase().replace(/[^а-яёa-z0-9]/gi,'_') + '_' + Date.now();
+
+  const data = {
+    name,
+    category:   document.getElementById('ing-category').value.trim()||'Прочее',
+    unit:       document.getElementById('ing-unit').value||'г',
+    price_per_kg: parseFloat(document.getElementById('ing-price').value)||0,
+    thresholds: {
+      min_stock_g:    parseFloat(document.getElementById('ing-min').value)||0,
+      reorder_point_g:parseFloat(document.getElementById('ing-reorder').value)||0,
+    },
+    supplier: {
+      name:           document.getElementById('ing-supplier').value.trim()||'',
+      contact:        document.getElementById('ing-supplier-tel').value.trim()||'',
+      lead_time_days: parseFloat(document.getElementById('ing-lead').value)||1,
+    },
+    kbju: {
+      cal: parseFloat(document.getElementById('ing-cal').value)||0,
+      p:   parseFloat(document.getElementById('ing-p').value)||0,
+      f:   parseFloat(document.getElementById('ing-f').value)||0,
+      c:   parseFloat(document.getElementById('ing-c').value)||0,
+    },
+    updated: new Date().toISOString(),
+  };
+
+  try {
+    await set(ref(db, path.ingredient(finalId)), data);
+    _ingredients[finalId] = data;
+
+    // Если остатка ещё нет — создать нулевой
+    if (!_stock[finalId]) {
+      await set(ref(db, path.stock(finalId)), { quantity_g: 0, last_updated: new Date().toISOString() });
+      _stock[finalId] = { quantity_g: 0 };
+    }
+
+    closeIngModal();
+    renderAll();
+    showMsg('main-msg','✅ Ингредиент сохранён','success');
+  } catch(e) {
+    showMsg('ing-modal-msg','❌ '+e.message,'error');
+  }
+};
+
+// ══════════════════════════════════════════════════
+// ПРИХОД ТОВАРА
+// ══════════════════════════════════════════════════
+window.openPurchaseModal = function(ingId = null) {
+  const modal = document.getElementById('modal-purchase');
+  modal.style.display = 'flex';
+
+  const sel = document.getElementById('pur-ing-select');
+  sel.innerHTML = Object.entries(_ingredients)
+    .sort(([,a],[,b]) => (a.name||'').localeCompare(b.name||'','ru'))
+    .map(([k,v]) => `<option value="${k}" ${k===ingId?'selected':''}>${v.name}</option>`)
+    .join('');
+
+  document.getElementById('pur-date').value = todayStr();
+  document.getElementById('modal-pur-form').reset();
+  sel.value = ingId || sel.options[0]?.value || '';
+  onPurIngChange();
+};
+
+window.closePurchaseModal = function() {
+  document.getElementById('modal-purchase').style.display = 'none';
+};
+
+window.onPurIngChange = function() {
+  const ingId = document.getElementById('pur-ing-select').value;
+  const ing   = _ingredients[ingId];
+  if (ing) {
+    document.getElementById('pur-price').value = ing.price_per_kg||'';
+    const cur = _stock[ingId]?.quantity_g||0;
+    document.getElementById('pur-current').textContent = `Текущий остаток: ${(cur/1000).toFixed(3)} кг`;
+  }
+};
+function onPurIngChange() { window.onPurIngChange(); }
+
+window.savePurchase = async function() {
+  const ingId   = document.getElementById('pur-ing-select').value;
+  const qtyKg   = parseFloat(document.getElementById('pur-qty-kg').value)||0;
+  const priceKg = parseFloat(document.getElementById('pur-price').value)||0;
+  const date    = document.getElementById('pur-date').value;
+  const supplier= document.getElementById('pur-supplier').value.trim();
+  const invoice = document.getElementById('pur-invoice').value.trim();
+
+  if (!ingId || qtyKg<=0) { showMsg('pur-modal-msg','⚠️ Выбери ингредиент и введи количество','error'); return; }
+
+  const qtyG = qtyKg * 1000;
+  const now  = new Date().toISOString();
+
+  try {
+    // 1. Обновляем остаток
+    const cur = _stock[ingId]?.quantity_g||0;
+    const newQty = cur + qtyG;
+    await set(ref(db, path.stock(ingId)), { quantity_g: newQty, last_updated: now });
+    _stock[ingId] = { quantity_g: newQty, last_updated: now };
+
+    // 2. Обновляем цену в справочнике
+    if (priceKg > 0) {
+      await update(ref(db, path.ingredient(ingId)), { price_per_kg: priceKg });
+      _ingredients[ingId].price_per_kg = priceKg;
+    }
+
+    // 3. Пишем движение в отдельную таблицу
+    const movement = {
+      type: 'purchase',
+      ingredient_id: ingId,
+      ingredient_name: _ingredients[ingId]?.name||'',
+      quantity_g: qtyG,
+      price_per_kg: priceKg,
+      total_cost: (qtyKg * priceKg).toFixed(2),
+      supplier: supplier,
+      invoice: invoice,
+      date: date,
+      timestamp: now,
+      balance_after_g: newQty,
+    };
+    const mvRef = push(ref(db, path.movements()));
+    await set(mvRef, movement);
+    _movements.unshift({...movement, _key: mvRef.key});
+
+    closePurchaseModal();
+    renderAll();
+    showMsg('main-msg',`✅ Приход: ${_ingredients[ingId]?.name} +${qtyKg} кг записан`,'success');
+  } catch(e) {
+    showMsg('pur-modal-msg','❌ '+e.message,'error');
+  }
+};
+
+// ══════════════════════════════════════════════════
+// РУЧНОЕ СПИСАНИЕ
+// ══════════════════════════════════════════════════
+window.openWriteOffModal = function(ingId = null) {
+  const modal = document.getElementById('modal-writeoff');
+  modal.style.display = 'flex';
+
+  const sel = document.getElementById('wo-ing-select');
+  sel.innerHTML = Object.entries(_ingredients)
+    .sort(([,a],[,b]) => (a.name||'').localeCompare(b.name||'','ru'))
+    .map(([k,v]) => `<option value="${k}" ${k===ingId?'selected':''}>${v.name}</option>`)
+    .join('');
+  sel.value = ingId || sel.options[0]?.value || '';
+  onWoIngChange();
+};
+
+window.closeWriteOffModal = function() {
+  document.getElementById('modal-writeoff').style.display = 'none';
+};
+
+window.onWoIngChange = function() {
+  const ingId = document.getElementById('wo-ing-select').value;
+  const cur   = _stock[ingId]?.quantity_g||0;
+  document.getElementById('wo-current').textContent = `Текущий остаток: ${(cur/1000).toFixed(3)} кг`;
+};
+
+window.saveWriteOff = async function() {
+  const ingId  = document.getElementById('wo-ing-select').value;
+  const qtyKg  = parseFloat(document.getElementById('wo-qty-kg').value)||0;
+  const reason = document.getElementById('wo-reason').value.trim()||'Ручное списание';
+
+  if (!ingId || qtyKg<=0) { showMsg('wo-modal-msg','⚠️ Выбери ингредиент и введи количество','error'); return; }
+
+  const qtyG = qtyKg * 1000;
+  const cur  = _stock[ingId]?.quantity_g||0;
+  if (qtyG > cur) { showMsg('wo-modal-msg','⚠️ Недостаточно остатка','error'); return; }
+
+  const newQty = cur - qtyG;
+  const now    = new Date().toISOString();
+
+  try {
+    await set(ref(db, path.stock(ingId)), { quantity_g: newQty, last_updated: now });
+    _stock[ingId] = { quantity_g: newQty };
+
+    const movement = {
+      type: 'manual_write_off',
+      ingredient_id: ingId,
+      ingredient_name: _ingredients[ingId]?.name||'',
+      quantity_g: -qtyG,
+      reason,
+      timestamp: now,
+      balance_after_g: newQty,
+    };
+    const mvRef = push(ref(db, path.movements()));
+    await set(mvRef, movement);
+    _movements.unshift({...movement, _key: mvRef.key});
+
+    closeWriteOffModal();
+    renderAll();
+    showMsg('main-msg',`✅ Списано: ${_ingredients[ingId]?.name} −${qtyKg} кг`,'success');
+  } catch(e) {
+    showMsg('wo-modal-msg','❌ '+e.message,'error');
+  }
+};
+
+// ══════════════════════════════════════════════════
+// СПИСАНИЕ ПО ПРОДАЖАМ БЛЮД
+// ══════════════════════════════════════════════════
+window.openSaleWriteOffModal = async function() {
+  const modal = document.getElementById('modal-sale-wo');
+  modal.style.display = 'flex';
+
+  // Загружаем рецепты пользователя
+  const snap = await get(ref(db, `recipes/${_username}`));
+  const recipes = snap.exists() ? snap.val() : {};
+
+  const container = document.getElementById('sale-wo-rows');
+  container.innerHTML = '';
+  window._saleRecipes = {};
+
+  // Собираем все рецепты из всех outlet
+  Object.values(recipes).forEach(outletRecipes => {
+    if (typeof outletRecipes !== 'object') return;
+    Object.entries(outletRecipes).forEach(([rid, rec]) => {
+      if (!rec.name) return;
+      window._saleRecipes[rid] = rec;
+      const row = document.createElement('div');
+      row.className = 'sale-wo-row';
+      row.innerHTML = `
+        <div class="sale-wo-name">${rec.name}</div>
+        <div class="sale-wo-group">${rec.group||rec.product_group||'—'}</div>
+        <input type="number" id="swo-qty-${rid}" min="0" placeholder="0"
+          style="width:80px;text-align:center" oninput="previewSaleWO()">
+        <span style="font-family:var(--mono);font-size:11px;color:var(--muted)" id="swo-cost-${rid}">—</span>`;
+      container.appendChild(row);
+    });
+  });
+
+  if (!container.children.length) {
+    container.innerHTML = '<div style="color:var(--muted);font-family:var(--mono);font-size:12px">Рецептов не найдено. Сначала создай рецепты в калькуляторе.</div>';
+  }
+};
+
+window.closeSaleWOModal = function() {
+  document.getElementById('modal-sale-wo').style.display = 'none';
+};
+
+window.previewSaleWO = function() {
+  let totalLines = [];
+  Object.entries(window._saleRecipes||{}).forEach(([rid, rec]) => {
+    const qty = parseFloat(document.getElementById('swo-qty-'+rid)?.value)||0;
+    if (!qty || !rec.stock_write_off?.per_portion) return;
+    rec.stock_write_off.per_portion.forEach(item => {
+      const totalG = item.brutto_g * qty;
+      totalLines.push(`${item.ingredient}: ${totalG.toFixed(1)} г`);
+    });
+    const costEl = document.getElementById('swo-cost-'+rid);
+    if (costEl) {
+      const cost = (rec.pricing?.cost_per_unit||0)*qty;
+      costEl.textContent = cost>0 ? `${cost.toFixed(0)} ₽` : '—';
+    }
+  });
+  document.getElementById('sale-wo-preview').textContent =
+    totalLines.length ? 'Будет списано:\n'+totalLines.join('\n') : '';
+};
+
+window.applySaleWriteOff = async function() {
+  const now = new Date().toISOString();
+  const movements = [];
+  const stockUpdates = {};
+  let hasData = false;
+
+  Object.entries(window._saleRecipes||{}).forEach(([rid, rec]) => {
+    const qty = parseFloat(document.getElementById('swo-qty-'+rid)?.value)||0;
+    if (!qty || !rec.stock_write_off?.per_portion) return;
+    hasData = true;
+
+    rec.stock_write_off.per_portion.forEach(item => {
+      // Ищем ингредиент в справочнике по имени или ingredient_id
+      let ingId = item.ingredient_id;
+      if (!ingId) {
+        ingId = Object.entries(_ingredients)
+          .find(([,v]) => v.name?.toLowerCase()===item.ingredient?.toLowerCase())?.[0];
+      }
+      if (!ingId) return;
+
+      const writeG = item.brutto_g * qty;
+      if (!stockUpdates[ingId]) stockUpdates[ingId] = 0;
+      stockUpdates[ingId] -= writeG;
+
+      movements.push({
+        type: 'sale_write_off',
+        ingredient_id: ingId,
+        ingredient_name: _ingredients[ingId]?.name||item.ingredient,
+        quantity_g: -writeG,
+        reason: `Продажа: ${rec.name} × ${qty}`,
+        recipe_id: rid,
+        recipe_name: rec.name,
+        portions: qty,
+        timestamp: now,
+      });
+    });
+  });
+
+  if (!hasData) { showMsg('sale-wo-msg','⚠️ Введи количество хотя бы одного блюда','error'); return; }
+
+  try {
+    // Применяем все обновления остатков
+    for (const [ingId, delta] of Object.entries(stockUpdates)) {
+      const cur    = _stock[ingId]?.quantity_g||0;
+      const newQty = Math.max(0, cur + delta);
+      await set(ref(db, path.stock(ingId)), { quantity_g: newQty, last_updated: now });
+      _stock[ingId] = { quantity_g: newQty };
+      // Дописываем balance_after в движения
+      movements.filter(m=>m.ingredient_id===ingId).forEach(m=>m.balance_after_g=newQty);
+    }
+
+    // Записываем все движения
+    for (const mv of movements) {
+      const mvRef = push(ref(db, path.movements()));
+      await set(mvRef, mv);
+      _movements.unshift({...mv, _key: mvRef.key});
+    }
+
+    closeSaleWOModal();
+    renderAll();
+    showMsg('main-msg',`✅ Списание по продажам выполнено (${movements.length} движений)`,'success');
+  } catch(e) {
+    showMsg('sale-wo-msg','❌ '+e.message,'error');
+  }
+};
+
+// ══════════════════════════════════════════════════
+// РЕНДЕР
+// ══════════════════════════════════════════════════
+function renderAll() {
+  renderStockTable();
+  renderMovements();
+  renderAlerts();
+  renderStats();
+}
+
+function renderStats() {
+  const total = Object.keys(_ingredients).length;
+  const low   = Object.entries(_stock).filter(([id,s]) => {
+    const th = _ingredients[id]?.thresholds;
+    return th && s.quantity_g <= (th.reorder_point_g||0);
+  }).length;
+  const totalVal = Object.entries(_stock).reduce((sum,[id,s]) => {
+    return sum + (s.quantity_g/1000)*(_ingredients[id]?.price_per_kg||0);
+  }, 0);
+
+  document.getElementById('stat-total').textContent  = total;
+  document.getElementById('stat-low').textContent    = low;
+  document.getElementById('stat-value').textContent  = totalVal.toFixed(0)+' ₽';
+  document.getElementById('stat-moves').textContent  = _movements.length;
+}
+
+function renderAlerts() {
+  const alerts = Object.entries(_stock)
+    .filter(([id,s]) => {
+      const th = _ingredients[id]?.thresholds;
+      return th && s.quantity_g <= (th.reorder_point_g||0);
+    })
+    .map(([id,s]) => ({ id, ing: _ingredients[id], qty: s.quantity_g }));
+
+  const box = document.getElementById('alerts-box');
+  if (!alerts.length) { box.style.display='none'; return; }
+
+  box.style.display = 'block';
+  box.innerHTML = `<div class="alert-title">⚠️ Критические остатки (${alerts.length})</div>`
+    + alerts.map(a => `
+      <div class="alert-row">
+        <span>${a.ing?.name||a.id}</span>
+        <span style="font-family:var(--mono);color:var(--red)">
+          ${(a.qty/1000).toFixed(3)} кг
+          <span style="color:var(--muted);font-size:10px"> / мин. ${((a.ing?.thresholds?.reorder_point_g||0)/1000).toFixed(1)} кг</span>
+        </span>
+        <button class="action-btn" onclick="openPurchaseModal('${a.id}')">+ Приход</button>
+      </div>`).join('');
+}
+
+function renderStockTable() {
+  const search   = (document.getElementById('stock-search')?.value||'').toLowerCase();
+  const catFilter= document.getElementById('stock-cat-filter')?.value||'all';
+
+  // Обновляем фильтр категорий
+  const cats = [...new Set(Object.values(_ingredients).map(i=>i.category||'Прочее'))].sort();
+  const catSel = document.getElementById('stock-cat-filter');
+  const curCat = catSel.value;
+  catSel.innerHTML = `<option value="all">Все категории</option>`
+    + cats.map(c=>`<option value="${c}" ${c===curCat?'selected':''}>${c}</option>`).join('');
+
+  const tbody = document.getElementById('stock-tbody');
+  tbody.innerHTML = '';
+
+  const sorted = Object.entries(_ingredients)
+    .filter(([id,ing]) => {
+      const matchSearch = !search || ing.name?.toLowerCase().includes(search);
+      const matchCat    = catFilter==='all' || (ing.category||'Прочее')===catFilter;
+      return matchSearch && matchCat;
+    })
+    .sort(([,a],[,b]) => {
+      const ca = a.category||'Прочее', cb = b.category||'Прочее';
+      if (ca!==cb) return ca.localeCompare(cb,'ru');
+      return (a.name||'').localeCompare(b.name||'','ru');
+    });
+
+  if (!sorted.length) {
+    tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;color:var(--muted);font-family:var(--mono);font-size:12px;padding:24px">
+      ${Object.keys(_ingredients).length ? 'Ничего не найдено' : 'Справочник пуст — добавь первый ингредиент'}
+    </td></tr>`;
+    return;
+  }
+
+  let curCatRender = null;
+
+  sorted.forEach(([id, ing]) => {
+    const s      = _stock[id] || { quantity_g: 0 };
+    const qty    = s.quantity_g || 0;
+    const th     = ing.thresholds || {};
+    const isLow  = th.reorder_point_g > 0 && qty <= th.reorder_point_g;
+    const isCrit = th.min_stock_g    > 0 && qty <= th.min_stock_g;
+    const val    = (qty/1000) * (ing.price_per_kg||0);
+    const cat    = ing.category||'Прочее';
+
+    // Группировка по категории
+    if (cat !== curCatRender) {
+      curCatRender = cat;
+      const catRow = document.createElement('tr');
+      catRow.innerHTML = `<td colspan="8" class="cat-row">${cat}</td>`;
+      tbody.appendChild(catRow);
+    }
+
+    const statusDot = isCrit ? '🔴' : isLow ? '🟡' : '🟢';
+    const statusClass = isCrit ? 'qty-crit' : isLow ? 'qty-low' : '';
+
+    const tr = document.createElement('tr');
+    tr.className = isCrit ? 'row-crit' : isLow ? 'row-low' : '';
+    tr.innerHTML = `
+      <td>${statusDot} <span style="font-size:13px">${ing.name}</span></td>
+      <td class="num ${statusClass}">${(qty/1000).toFixed(3)}</td>
+      <td class="num">${(th.min_stock_g/1000||0).toFixed(1)}</td>
+      <td class="num">${(th.reorder_point_g/1000||0).toFixed(1)}</td>
+      <td class="num">${(ing.price_per_kg||0).toFixed(2)}</td>
+      <td class="num">${val.toFixed(2)}</td>
+      <td class="c">${ing.supplier?.name||'—'}</td>
+      <td class="c">
+        <button class="tbl-btn" onclick="openPurchaseModal('${id}')" title="Приход">▲</button>
+        <button class="tbl-btn tbl-btn-red" onclick="openWriteOffModal('${id}')" title="Списание">▼</button>
+        <button class="tbl-btn tbl-btn-muted" onclick="openIngModal('${id}')" title="Редактировать">✎</button>
+      </td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+function renderMovements() {
+  const filter = document.getElementById('mov-filter')?.value||'all';
+  const tbody  = document.getElementById('mov-tbody');
+  tbody.innerHTML = '';
+
+  const filtered = filter==='all'
+    ? _movements
+    : _movements.filter(m=>m.type===filter);
+
+  if (!filtered.length) {
+    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--muted);font-family:var(--mono);font-size:12px;padding:24px">Движений нет</td></tr>`;
+    return;
+  }
+
+  filtered.slice(0,50).forEach(m => {
+    const qtyG   = m.quantity_g||0;
+    const isPlus = qtyG >= 0;
+    const typeLabels = {
+      purchase:        { label:'Приход',      cls:'mov-plus' },
+      sale_write_off:  { label:'Продажа',     cls:'mov-minus' },
+      manual_write_off:{ label:'Списание',    cls:'mov-minus' },
+      correction:      { label:'Коррекция',   cls:'mov-neutral' },
+      waste_write_off: { label:'Отходы',      cls:'mov-minus' },
+    };
+    const tl = typeLabels[m.type] || { label: m.type, cls:'mov-neutral' };
+    const dt = m.timestamp ? new Date(m.timestamp).toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '—';
+
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td style="color:var(--muted);font-family:var(--mono);font-size:11px">${dt}</td>
+      <td><span class="mov-badge ${tl.cls}">${tl.label}</span></td>
+      <td>${m.ingredient_name||'—'}</td>
+      <td class="num ${isPlus?'qty-ok':'qty-low'}">${isPlus?'+':''}${(qtyG/1000).toFixed(3)} кг</td>
+      <td style="font-size:12px;color:var(--muted)">${m.reason||m.recipe_name||'—'}</td>
+      <td class="num" style="color:var(--muted);font-size:11px">${m.balance_after_g!==undefined?(m.balance_after_g/1000).toFixed(3)+' кг':'—'}</td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+// ══════════════════════════════════════════════════
+// HELPERS
+// ══════════════════════════════════════════════════
+window.filterStock   = () => renderStockTable();
+window.filterMovements = () => renderMovements();
+
+function todayStr() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
+function showMsg(elId, text, type) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  el.textContent = text;
+  el.style.color   = type==='success' ? '#5a8c64' : '#c0504a';
+  el.style.display = 'block';
+  setTimeout(()=>el.style.display='none', 5000);
+}
+
+window.toggleTheme = function() {
+  const light = document.documentElement.classList.toggle('light');
+  document.getElementById('btn-dark').classList.toggle('active',!light);
+  document.getElementById('btn-light').classList.toggle('active',light);
+};
+
+window.toggleSec = function(id) {
+  document.getElementById(id)?.classList.toggle('collapsed');
+};
+
+window.switchTab = function(tab, btn) {
+  document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
+  document.querySelectorAll('.tab-panel').forEach(p=>p.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('tab-'+tab).classList.add('active');
+};
+
+// ── Закрыть модалку по клику на фон ──
+document.querySelectorAll('.modal-overlay').forEach(m => {
+  m.addEventListener('click', e => { if (e.target===m) m.style.display='none'; });
+});
+
+// ── Авто-логин ──
+(function() {
+  const saved = localStorage.getItem('pyra_username');
+  if (saved) {
+    document.getElementById('s-username').value = saved;
+    document.getElementById('s-outlet').value   = localStorage.getItem('pyra_outlet')||'main';
+  }
+})();
+</script>
+
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+
+:root{
+  --bg:#0f0e0b;--paper:#1a1812;--card:#201e18;--border:#2e2b22;
+  --gold:#c8a84b;--gold2:#e8cc78;--gold3:#f5e4a8;
+  --cream:#e8dfc8;--muted:#7a7260;--red:#c0504a;--green:#5a8c64;--blue:#4a7a9b;
+  --text:#d4cbb8;
+  --serif:'Cormorant Garamond',Georgia,serif;
+  --mono:'DM Mono',monospace;
+}
+:root.light{
+  --bg:#f5f0e8;--paper:#ede7d9;--card:#e8e1d0;--border:#cfc6b0;
+  --gold:#9a7830;--gold2:#7a5e1e;--gold3:#5a4210;
+  --cream:#2c2410;--muted:#8a7f6a;--red:#b03030;--green:#3a6e44;--text:#3a3220;
+}
+
+body{background:var(--bg);color:var(--text);font-family:var(--serif);min-height:100vh;padding-bottom:80px;transition:background .3s,color .3s}
+
+/* HEADER */
+header{text-align:center;padding:50px 24px 32px;border-bottom:1px solid var(--border);position:relative}
+header::before{content:'';position:absolute;inset:0;background:radial-gradient(ellipse 60% 80% at 50% 0%,rgba(200,168,75,.07) 0%,transparent 70%);pointer-events:none}
+.logo-line{display:flex;align-items:center;justify-content:center;gap:16px;margin-bottom:8px}
+.logo-diamond{width:7px;height:7px;background:var(--gold);transform:rotate(45deg);flex-shrink:0}
+h1{font-size:clamp(22px,4vw,40px);font-weight:300;letter-spacing:.06em;color:var(--gold2);line-height:1}
+.subtitle{font-size:11px;font-family:var(--mono);letter-spacing:.2em;color:var(--muted);text-transform:uppercase;margin-top:6px}
+.gost-badge{display:inline-block;margin-top:10px;font-family:var(--mono);font-size:10px;letter-spacing:.12em;color:var(--gold);border:1px solid rgba(200,168,75,.3);padding:3px 10px;border-radius:2px}
+
+/* NAV */
+.top-nav{display:flex;justify-content:center;gap:8px;padding:16px 24px;border-bottom:1px solid var(--border);flex-wrap:wrap}
+.nav-link{font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);text-decoration:none;padding:5px 12px;border:1px solid transparent;border-radius:2px;transition:all .15s}
+.nav-link:hover{color:var(--gold);border-color:rgba(200,168,75,.3)}
+.nav-link.active{color:var(--gold2);border-color:var(--gold)}
+
+/* LAYOUT */
+.main{max-width:1100px;margin:0 auto;padding:32px 20px 0;display:flex;flex-direction:column;gap:20px}
+
+/* LOGIN BAR */
+.login-bar{background:var(--card);border:1px solid var(--border);border-radius:2px;padding:18px 20px;display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap}
+.login-bar label{font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);display:block;margin-bottom:4px}
+.login-bar input{background:var(--bg);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:13px;padding:7px 10px;border-radius:1px;outline:none;transition:border-color .15s}
+.login-bar input:focus{border-color:var(--gold)}
+
+/* STATS */
+.stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.stat-card{background:var(--card);border:1px solid var(--border);border-radius:2px;padding:16px 18px}
+.stat-label{font-family:var(--mono);font-size:9px;letter-spacing:.15em;text-transform:uppercase;color:var(--muted);margin-bottom:6px}
+.stat-value{font-family:var(--mono);font-size:22px;color:var(--gold2)}
+.stat-value.red{color:var(--red)}
+
+/* ALERTS */
+.alerts-box{background:rgba(192,80,74,.06);border:1px solid rgba(192,80,74,.3);border-radius:2px;padding:14px 18px;display:none}
+.alert-title{font-family:var(--mono);font-size:10px;letter-spacing:.15em;text-transform:uppercase;color:var(--red);margin-bottom:10px}
+.alert-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:5px 0;border-bottom:1px solid rgba(192,80,74,.1);font-size:13px}
+.alert-row:last-child{border-bottom:none}
+
+/* SECTION */
+.section{background:var(--card);border:1px solid var(--border);border-radius:2px;overflow:hidden}
+.section-header{display:flex;align-items:center;gap:12px;padding:13px 18px;border-bottom:1px solid var(--border);background:var(--paper);cursor:pointer;user-select:none}
+.section-header:hover{background:var(--bg)}
+.section-header.no-toggle{cursor:default}
+.section-header.no-toggle:hover{background:var(--paper)}
+.sec-num{font-family:var(--mono);font-size:10px;color:var(--gold);letter-spacing:.1em;width:28px;flex-shrink:0}
+.sec-title{font-size:15px;font-weight:400;color:var(--cream);flex:1;letter-spacing:.03em}
+.sec-actions{display:flex;gap:8px;align-items:center}
+.chevron{color:var(--muted);font-size:11px;transition:transform .2s;margin-left:4px}
+.section.collapsed .chevron{transform:rotate(-90deg)}
+.section-body{padding:0}
+.section.collapsed .section-body{display:none}
+
+/* ACTION BUTTONS */
+.action-btn{background:none;border:1px solid var(--gold);color:var(--gold);font-family:var(--mono);font-size:10px;letter-spacing:.08em;padding:5px 12px;cursor:pointer;border-radius:1px;transition:all .15s;white-space:nowrap}
+.action-btn:hover{background:rgba(200,168,75,.15);color:var(--gold2)}
+.action-btn.green{border-color:var(--green);color:var(--green)}
+.action-btn.green:hover{background:rgba(90,140,100,.15)}
+.action-btn.red{border-color:var(--red);color:var(--red)}
+.action-btn.red:hover{background:rgba(192,80,74,.15)}
+.action-btn.blue{border-color:var(--blue);color:var(--blue)}
+.action-btn.blue:hover{background:rgba(74,122,155,.15)}
+
+/* TOOLBAR */
+.toolbar{display:flex;gap:10px;align-items:center;padding:12px 18px;border-bottom:1px solid var(--border);flex-wrap:wrap;background:var(--paper)}
+.toolbar input,.toolbar select{background:var(--bg);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:12px;padding:6px 10px;border-radius:1px;outline:none}
+.toolbar input:focus,.toolbar select:focus{border-color:var(--gold)}
+
+/* TABLE */
+.table-wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{font-family:var(--mono);font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);padding:8px 12px;text-align:left;border-bottom:1px solid var(--border);white-space:nowrap;background:var(--paper);position:sticky;top:0;z-index:1}
+td{padding:9px 12px;border-bottom:1px solid var(--border);vertical-align:middle}
+tr:hover td{background:rgba(200,168,75,.03)}
+td.num{text-align:right;font-family:var(--mono);font-size:12px}
+td.c{text-align:center}
+.cat-row{background:var(--paper)!important;font-family:var(--mono);font-size:9px;letter-spacing:.2em;text-transform:uppercase;color:var(--gold);padding:6px 12px}
+.row-crit td{background:rgba(192,80,74,.04)!important}
+.row-low  td{background:rgba(200,168,75,.04)!important}
+.qty-crit{color:var(--red)!important;font-weight:500}
+.qty-low {color:var(--gold)!important}
+.qty-ok  {color:var(--green)!important}
+.tbl-btn{background:none;border:1px solid var(--border);color:var(--muted);font-size:12px;padding:3px 8px;cursor:pointer;border-radius:1px;transition:all .12s;margin:0 2px}
+.tbl-btn:hover{border-color:var(--gold);color:var(--gold)}
+.tbl-btn-red:hover{border-color:var(--red)!important;color:var(--red)!important}
+.tbl-btn-muted:hover{border-color:var(--muted)!important;color:var(--cream)!important}
+
+/* MOVEMENTS */
+.mov-badge{font-family:var(--mono);font-size:9px;letter-spacing:.1em;text-transform:uppercase;padding:2px 7px;border-radius:2px}
+.mov-plus   {background:rgba(90,140,100,.15);color:var(--green);border:1px solid rgba(90,140,100,.3)}
+.mov-minus  {background:rgba(192,80,74,.1); color:var(--red);  border:1px solid rgba(192,80,74,.2)}
+.mov-neutral{background:rgba(200,168,75,.1);color:var(--gold); border:1px solid rgba(200,168,75,.2)}
+
+/* TABS */
+.tab-bar{display:flex;border-bottom:1px solid var(--border);background:var(--paper)}
+.tab-btn{font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;padding:11px 18px;border:none;background:none;color:var(--muted);cursor:pointer;border-bottom:2px solid transparent;transition:all .15s}
+.tab-btn:hover{color:var(--text)}
+.tab-btn.active{color:var(--gold2);border-bottom-color:var(--gold)}
+.tab-panel{display:none}
+.tab-panel.active{display:block}
+
+/* MODAL */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:1000;display:none;align-items:center;justify-content:center;padding:20px}
+.modal-box{background:var(--card);border:1px solid var(--border);border-radius:2px;width:100%;max-width:520px;max-height:90vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+.modal-header{display:flex;justify-content:space-between;align-items:center;padding:16px 20px;border-bottom:1px solid var(--border);background:var(--paper)}
+.modal-title{font-size:16px;color:var(--cream);font-weight:400;letter-spacing:.03em}
+.modal-close{background:none;border:none;color:var(--muted);font-size:20px;cursor:pointer;padding:0 4px;line-height:1;transition:color .15s}
+.modal-close:hover{color:var(--red)}
+.modal-body{padding:20px}
+.modal-footer{padding:14px 20px;border-top:1px solid var(--border);display:flex;gap:10px;justify-content:flex-end}
+
+/* FORM FIELDS IN MODAL */
+.form-group{margin-bottom:14px}
+.form-label{font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);display:block;margin-bottom:4px}
+.form-input{width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:13px;padding:7px 10px;border-radius:1px;outline:none;transition:border-color .15s;-moz-appearance:textfield}
+.form-input::-webkit-inner-spin-button,.form-input::-webkit-outer-spin-button{-webkit-appearance:none}
+.form-input:focus{border-color:var(--gold);color:var(--cream)}
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.form-section{font-family:var(--mono);font-size:9px;letter-spacing:.2em;text-transform:uppercase;color:var(--gold);margin:16px 0 10px;padding-bottom:4px;border-bottom:1px solid var(--border)}
+
+/* SALE WO */
+.sale-wo-row{display:grid;grid-template-columns:1fr 120px 80px 80px;gap:10px;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)}
+.sale-wo-name{font-size:14px;color:var(--cream)}
+.sale-wo-group{font-family:var(--mono);font-size:10px;color:var(--muted)}
+.sale-wo-preview{font-family:var(--mono);font-size:11px;color:var(--muted);white-space:pre-line;margin-top:12px;padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:1px;max-height:120px;overflow-y:auto}
+
+/* INFO BLOCK */
+.info-block{background:var(--paper);border-left:3px solid var(--gold);padding:10px 14px;font-size:12px;font-family:var(--mono);color:var(--muted);line-height:1.6;margin:0 18px 12px}
+
+/* MISC */
+hr.sep{border:none;border-top:1px solid var(--border);margin:14px 0}
+.calc-btn{width:100%;background:var(--gold);color:#0f0e0b;border:none;padding:13px;font-family:var(--mono);font-size:11px;letter-spacing:.18em;text-transform:uppercase;cursor:pointer;border-radius:1px;transition:background .15s}
+.calc-btn:hover{background:var(--gold2)}
+.btn-cancel{background:none;border:1px solid var(--border);color:var(--muted);padding:9px 18px;font-family:var(--mono);font-size:11px;letter-spacing:.1em;cursor:pointer;border-radius:1px;transition:all .15s}
+.btn-cancel:hover{border-color:var(--muted);color:var(--text)}
+.btn-primary{background:var(--gold);color:#0f0e0b;border:none;padding:9px 20px;font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;cursor:pointer;border-radius:1px;transition:background .15s}
+.btn-primary:hover{background:var(--gold2)}
+
+/* THEME */
+.theme-toggle{position:fixed;top:18px;right:18px;z-index:100;background:var(--card);border:1px solid var(--border);border-radius:40px;padding:4px;display:flex;align-items:center;gap:2px;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.2)}
+.theme-btn{width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:15px;user-select:none;transition:background .2s}
+.theme-btn.active{background:var(--gold)}
+.theme-btn:not(.active){opacity:.4}
+
+/* FOOTER */
+.footer{text-align:center;padding:48px 24px 0;font-family:var(--mono);font-size:10px;letter-spacing:.18em;color:var(--muted);text-transform:uppercase}
+.footer-brand{font-size:13px;color:var(--gold);letter-spacing:.3em;margin-bottom:4px}
+.footer a{color:var(--muted);text-decoration:none}
+.footer a:hover{color:var(--gold)}
+
+#login-hint{font-family:var(--mono);font-size:12px;color:var(--muted);text-align:center;padding:40px;border:1px dashed var(--border);border-radius:2px;background:var(--card)}
+#workspace{display:none}
+
+@media(max-width:700px){
+  .stats-grid{grid-template-columns:1fr 1fr}
+  .form-grid{grid-template-columns:1fr}
+  .sale-wo-row{grid-template-columns:1fr 70px 60px}
+}
+</style>
+</head>
+<body>
+
+<div class="theme-toggle" onclick="toggleTheme()">
+  <div class="theme-btn active" id="btn-dark">🌙</div>
+  <div class="theme-btn" id="btn-light">☀️</div>
+</div>
+
+<header>
+  <div class="logo-line">
+    <div class="logo-diamond"></div>
+    <h1>Складской учёт</h1>
+    <div class="logo-diamond"></div>
+  </div>
+  <p class="subtitle">Остатки · Приходы · Списания · Движения</p>
+  <div class="gost-badge">PYRA Stock v1.0</div>
+</header>
+
+<nav class="top-nav">
+  <a href="bakery-calc.html"   class="nav-link">◇ Кондитерский</a>
+  <a href="catering-calc.html" class="nav-link">◇ Общепит</a>
+  <a href="ttk-generator.html" class="nav-link">◇ Генератор ТТК</a>
+  <a href="stock.html"         class="nav-link active">◆ Склад</a>
+</nav>
+
+<div class="main">
+
+  <!-- LOGIN BAR -->
+  <div class="login-bar">
+    <div>
+      <label>Telegram username</label>
+      <input type="text" id="s-username" placeholder="username (без @)" style="width:180px">
+    </div>
+    <div>
+      <label>Точка / Outlet</label>
+      <input type="text" id="s-outlet" placeholder="main" style="width:120px">
+    </div>
+    <button class="action-btn" onclick="initStock()">◆ Загрузить склад</button>
+    <div id="main-msg" style="display:none;font-family:var(--mono);font-size:12px"></div>
+  </div>
+
+  <div id="login-hint">Введи Telegram username и нажми «Загрузить склад»</div>
+
+  <div id="workspace">
+
+    <!-- STATS -->
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-label">Ингредиентов</div>
+        <div class="stat-value" id="stat-total">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Ниже точки заказа</div>
+        <div class="stat-value red" id="stat-low">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Стоимость склада</div>
+        <div class="stat-value" id="stat-value">0 ₽</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Движений загружено</div>
+        <div class="stat-value" id="stat-moves">0</div>
+      </div>
+    </div>
+
+    <!-- ALERTS -->
+    <div class="alerts-box" id="alerts-box"></div>
+
+    <!-- БЫСТРЫЕ ДЕЙСТВИЯ -->
+    <div style="display:flex;gap:10px;flex-wrap:wrap">
+      <button class="action-btn green" onclick="openIngModal()">+ Добавить ингредиент</button>
+      <button class="action-btn" onclick="openPurchaseModal()">▲ Приход товара</button>
+      <button class="action-btn red" onclick="openWriteOffModal()">▼ Ручное списание</button>
+      <button class="action-btn blue" onclick="openSaleWriteOffModal()">⊙ Списание по продажам</button>
+      <button class="action-btn" onclick="initStock()" style="margin-left:auto">↺ Обновить</button>
+    </div>
+
+    <!-- ОСНОВНЫЕ ВКЛАДКИ -->
+    <div class="section">
+      <div class="tab-bar">
+        <button class="tab-btn active" onclick="switchTab('stock',this)">Остатки</button>
+        <button class="tab-btn" onclick="switchTab('movements',this)">Движения</button>
+      </div>
+
+      <!-- ОСТАТКИ -->
+      <div class="tab-panel active" id="tab-stock">
+        <div class="toolbar">
+          <input type="text" id="stock-search" placeholder="Поиск по названию…" oninput="filterStock()" style="width:200px">
+          <select id="stock-cat-filter" onchange="filterStock()">
+            <option value="all">Все категории</option>
+          </select>
+          <span style="font-family:var(--mono);font-size:10px;color:var(--muted);margin-left:auto">
+            🟢 в норме &nbsp; 🟡 близко к минимуму &nbsp; 🔴 критический остаток
+          </span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Ингредиент</th>
+                <th style="text-align:right">Остаток, кг</th>
+                <th style="text-align:right">Мин, кг</th>
+                <th style="text-align:right">Точка заказа, кг</th>
+                <th style="text-align:right">Цена ₽/кг</th>
+                <th style="text-align:right">Стоимость, ₽</th>
+                <th>Поставщик</th>
+                <th style="text-align:center">Действия</th>
+              </tr>
+            </thead>
+            <tbody id="stock-tbody">
+              <tr><td colspan="8" style="text-align:center;color:var(--muted);font-family:var(--mono);font-size:12px;padding:24px">Загрузи склад</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- ДВИЖЕНИЯ -->
+      <div class="tab-panel" id="tab-movements">
+        <div class="toolbar">
+          <select id="mov-filter" onchange="filterMovements()" style="width:160px">
+            <option value="all">Все движения</option>
+            <option value="purchase">Приходы</option>
+            <option value="sale_write_off">Продажи</option>
+            <option value="manual_write_off">Списания</option>
+            <option value="correction">Коррекции</option>
+          </select>
+          <span style="font-family:var(--mono);font-size:10px;color:var(--muted);margin-left:auto">Последние 50 записей</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Дата</th>
+                <th>Тип</th>
+                <th>Ингредиент</th>
+                <th style="text-align:right">Кол-во, кг</th>
+                <th>Основание</th>
+                <th style="text-align:right">Остаток после, кг</th>
+              </tr>
+            </thead>
+            <tbody id="mov-tbody">
+              <tr><td colspan="6" style="text-align:center;color:var(--muted);font-family:var(--mono);font-size:12px;padding:24px">Движений нет</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /workspace -->
+</div><!-- /main -->
+
+<!-- ══════════════════════════════════════════════ -->
+<!-- МОДАЛКА: ИНГРЕДИЕНТ -->
+<!-- ══════════════════════════════════════════════ -->
+<div class="modal-overlay" id="modal-ing">
+  <div class="modal-box">
+    <div class="modal-header">
+      <span class="modal-title" id="ing-modal-title">Новый ингредиент</span>
+      <button class="modal-close" onclick="closeIngModal()">×</button>
+    </div>
+    <div class="modal-body">
+      <form id="modal-ing-form" onsubmit="return false">
+        <input type="hidden" id="ing-id">
+
+        <div class="form-section">Основное</div>
+        <div class="form-group">
+          <label class="form-label">Название *</label>
+          <input class="form-input" type="text" id="ing-name" placeholder="Говядина">
+        </div>
+        <div class="form-grid">
+          <div class="form-group">
+            <label class="form-label">Категория</label>
+            <input class="form-input" type="text" id="ing-category" placeholder="Мясо">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Единица</label>
+            <select class="form-input" id="ing-unit">
+              <option value="г">г (граммы)</option>
+              <option value="мл">мл (миллилитры)</option>
+              <option value="шт">шт (штуки)</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Цена, ₽/кг</label>
+          <input class="form-input" type="number" id="ing-price" placeholder="0" step="0.01">
+        </div>
+
+        <div class="form-section">Пороги остатков</div>
+        <div class="form-grid">
+          <div class="form-group">
+            <label class="form-label">Минимальный остаток, г</label>
+            <input class="form-input" type="number" id="ing-min" placeholder="0">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Точка заказа, г</label>
+            <input class="form-input" type="number" id="ing-reorder" placeholder="0">
+          </div>
+        </div>
+
+        <div class="form-section">Поставщик</div>
+        <div class="form-group">
+          <label class="form-label">Наименование поставщика</label>
+          <input class="form-input" type="text" id="ing-supplier" placeholder="ООО МясоПром">
+        </div>
+        <div class="form-grid">
+          <div class="form-group">
+            <label class="form-label">Контакт / телефон</label>
+            <input class="form-input" type="text" id="ing-supplier-tel" placeholder="+7 900 000-00-00">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Срок поставки, дней</label>
+            <input class="form-input" type="number" id="ing-lead" placeholder="1" min="1">
+          </div>
+        </div>
+
+        <div class="form-section">КБЖУ (на 100 г)</div>
+        <div class="form-grid">
+          <div class="form-group">
+            <label class="form-label">Калории, ккал</label>
+            <input class="form-input" type="number" id="ing-cal" placeholder="0" step="0.1">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Белки, г</label>
+            <input class="form-input" type="number" id="ing-p" placeholder="0" step="0.1">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Жиры, г</label>
+            <input class="form-input" type="number" id="ing-f" placeholder="0" step="0.1">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Углеводы, г</label>
+            <input class="form-input" type="number" id="ing-c" placeholder="0" step="0.1">
+          </div>
+        </div>
+
+        <div id="ing-modal-msg" style="display:none;font-family:var(--mono);font-size:11px;margin-top:8px"></div>
+      </form>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-cancel" onclick="closeIngModal()">Отмена</button>
+      <button class="btn-primary" onclick="saveIngredient()">◆ Сохранить</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════ -->
+<!-- МОДАЛКА: ПРИХОД ТОВАРА -->
+<!-- ══════════════════════════════════════════════ -->
+<div class="modal-overlay" id="modal-purchase">
+  <div class="modal-box">
+    <div class="modal-header">
+      <span class="modal-title">▲ Приход товара</span>
+      <button class="modal-close" onclick="closePurchaseModal()">×</button>
+    </div>
+    <div class="modal-body">
+      <form id="modal-pur-form" onsubmit="return false">
+        <div class="form-group">
+          <label class="form-label">Ингредиент *</label>
+          <select class="form-input" id="pur-ing-select" onchange="onPurIngChange()"></select>
+        </div>
+        <div style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-bottom:12px" id="pur-current"></div>
+        <div class="form-grid">
+          <div class="form-group">
+            <label class="form-label">Количество, кг *</label>
+            <input class="form-input" type="number" id="pur-qty-kg" placeholder="0" step="0.001" min="0">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Цена, ₽/кг</label>
+            <input class="form-input" type="number" id="pur-price" placeholder="0" step="0.01">
+          </div>
+        </div>
+        <div class="form-grid">
+          <div class="form-group">
+            <label class="form-label">Дата прихода</label>
+            <input class="form-input" type="date" id="pur-date">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Поставщик</label>
+            <input class="form-input" type="text" id="pur-supplier" placeholder="Наименование">
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Номер накладной / счёта</label>
+          <input class="form-input" type="text" id="pur-invoice" placeholder="№ документа">
+        </div>
+        <div id="pur-modal-msg" style="display:none;font-family:var(--mono);font-size:11px;margin-top:8px"></div>
+      </form>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-cancel" onclick="closePurchaseModal()">Отмена</button>
+      <button class="btn-primary" onclick="savePurchase()">▲ Записать приход</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════ -->
+<!-- МОДАЛКА: РУЧНОЕ СПИСАНИЕ -->
+<!-- ══════════════════════════════════════════════ -->
+<div class="modal-overlay" id="modal-writeoff">
+  <div class="modal-box">
+    <div class="modal-header">
+      <span class="modal-title">▼ Ручное списание</span>
+      <button class="modal-close" onclick="closeWriteOffModal()">×</button>
+    </div>
+    <div class="modal-body">
+      <form id="modal-wo-form" onsubmit="return false">
+        <div class="form-group">
+          <label class="form-label">Ингредиент *</label>
+          <select class="form-input" id="wo-ing-select" onchange="onWoIngChange()"></select>
+        </div>
+        <div style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-bottom:12px" id="wo-current"></div>
+        <div class="form-group">
+          <label class="form-label">Количество, кг *</label>
+          <input class="form-input" type="number" id="wo-qty-kg" placeholder="0" step="0.001" min="0">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Причина списания</label>
+          <input class="form-input" type="text" id="wo-reason" placeholder="Порча, истёк срок, ревизия…">
+        </div>
+        <div id="wo-modal-msg" style="display:none;font-family:var(--mono);font-size:11px;margin-top:8px"></div>
+      </form>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-cancel" onclick="closeWriteOffModal()">Отмена</button>
+      <button class="btn-primary" style="background:var(--red);color:white" onclick="saveWriteOff()">▼ Списать</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════ -->
+<!-- МОДАЛКА: СПИСАНИЕ ПО ПРОДАЖАМ -->
+<!-- ══════════════════════════════════════════════ -->
+<div class="modal-overlay" id="modal-sale-wo">
+  <div class="modal-box" style="max-width:680px">
+    <div class="modal-header">
+      <span class="modal-title">⊙ Списание по продажам блюд</span>
+      <button class="modal-close" onclick="closeSaleWOModal()">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="info-block" style="margin:0 0 14px">
+        Введи количество проданных блюд. Система автоматически спишет ингредиенты по нормам из рецептур (брутто). После интеграции с POS — данные будут заполняться автоматически.
+      </div>
+      <div style="display:grid;grid-template-columns:2fr 100px 80px 80px;gap:8px;padding-bottom:8px;border-bottom:1px solid var(--border);margin-bottom:4px">
+        <span style="font-family:var(--mono);font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)">Блюдо / изделие</span>
+        <span style="font-family:var(--mono);font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)">Группа</span>
+        <span style="font-family:var(--mono);font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);text-align:center">Кол-во</span>
+        <span style="font-family:var(--mono);font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);text-align:right">Стоимость</span>
+      </div>
+      <div id="sale-wo-rows" style="max-height:280px;overflow-y:auto"></div>
+      <div class="sale-wo-preview" id="sale-wo-preview" style="display:none"></div>
+      <div id="sale-wo-msg" style="display:none;font-family:var(--mono);font-size:11px;margin-top:8px"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-cancel" onclick="closeSaleWOModal()">Отмена</button>
+      <button class="btn-primary" onclick="applySaleWriteOff()">⊙ Применить списание</button>
+    </div>
+  </div>
+</div>
+
+<div class="footer">
+  <div class="footer-brand">◆ PYRA ◆</div>
+  <div>Разработано <a href="https://anton67678.github.io/site-pira-network/" target="_blank">Pyramid Network</a></div>
+</div>
+
+<script>
+// Показ превью при вводе — вешаем на контейнер через делегирование
+document.getElementById('sale-wo-rows').addEventListener('input', () => {
+  const preview = document.getElementById('sale-wo-preview');
+  window.previewSaleWO();
+  preview.style.display = 'block';
+});
+
+// Закрытие модалок по фону
+document.querySelectorAll('.modal-overlay').forEach(m => {
+  m.addEventListener('click', e => { if (e.target===m) m.style.display='none'; });
+});
+</script>
+</body>
+</html>
