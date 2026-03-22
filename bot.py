@@ -22,6 +22,130 @@ dp  = Dispatcher()
 
 SITE_URL = 'https://calc.pyra.com.ru'
 
+
+# ══════════════════════════════════════════════════════
+# USER IDENTITY
+# ══════════════════════════════════════════════════════
+
+def _get_user_key(message: types.Message) -> str:
+    """
+    Возвращает стабильный ключ пользователя для Firebase.
+
+    Стратегия (backward-compatible):
+      1. Числовой telegram_id — основной ключ (неизменяемый).
+         Хранится как строка "tg_{id}" чтобы не конфликтовать
+         со старыми записями по username.
+      2. Username — вторичный, только для связи со старыми данными.
+
+    Старые данные (recipes/{username}/...) НЕ ломаются — бот
+    продолжает их читать через _resolve_data_key().
+    """
+    return f"tg_{message.from_user.id}"
+
+
+def _get_username(message: types.Message) -> str | None:
+    """Возвращает username без символа @, или None."""
+    return message.from_user.username or None
+
+
+def _resolve_data_key(message: types.Message) -> str:
+    """
+    Определяет ключ для чтения данных (recipes, stock и т.д.).
+
+    Логика миграции:
+      - Новые пользователи (зарегистрированные после обновления)
+        хранят данные под tg_{id}.
+      - Старые пользователи хранят данные под username.
+      - Читаем profile из /users/tg_{id} — там поле data_key
+        указывает, где хранятся данные пользователя.
+      - Если profile ещё не создан — fallback на username (старая логика).
+    """
+    tg_key = _get_user_key(message)
+    try:
+        profile = db.reference(f'users/{tg_key}').get()
+        if profile and profile.get('data_key'):
+            return profile['data_key']
+    except Exception:
+        pass
+    # Fallback для старых пользователей без профиля
+    return _get_username(message) or tg_key
+
+
+def _upsert_user(message: types.Message) -> None:
+    """
+    Создаёт или обновляет профиль пользователя.
+
+    Структура /users/tg_{id}/:
+      telegram_id  — числовой ID (неизменяемый, primary key)
+      username     — текущий @username (может меняться)
+      name         — имя из Telegram
+      plan         — тарифный план
+      data_key     — ключ для данных (recipes, stock, etc.)
+      registered   — дата первой регистрации
+      last_seen    — дата последнего обращения
+      schema       — версия схемы профиля
+
+    data_key логика:
+      - Новый пользователь без username → data_key = "tg_{id}"
+      - Новый пользователь с username → data_key = username
+        (чтобы веб-калькуляторы, которые пишут по username, работали)
+      - Старый пользователь (уже есть данные по username) → data_key = username
+    """
+    tg_key   = _get_user_key(message)
+    tg_id    = message.from_user.id
+    username = _get_username(message)
+    name     = message.from_user.first_name or ''
+    now      = datetime.datetime.utcnow().isoformat()
+
+    ref = db.reference(f'users/{tg_key}')
+
+    try:
+        existing = ref.get()
+    except Exception:
+        existing = None
+
+    if existing:
+        # Пользователь уже есть — обновляем только изменяемые поля
+        updates = {
+            'username':  username or existing.get('username', ''),
+            'name':      name,
+            'last_seen': now,
+        }
+        # Если username сменился — обновляем, но data_key НЕ трогаем
+        if username and existing.get('username') != username:
+            updates['username'] = username
+            # Логируем смену username для отладки
+            updates['username_prev'] = existing.get('username', '')
+        ref.update(updates)
+    else:
+        # Новый пользователь — создаём полный профиль
+        # data_key: если есть username — используем его (веб-сайт пишет по username)
+        # иначе — числовой ключ
+        data_key = username if username else tg_key
+
+        ref.set({
+            'telegram_id': tg_id,          # числовой, неизменяемый
+            'username':    username or '',  # может меняться
+            'name':        name,
+            'plan':        'free',
+            'data_key':    data_key,        # ключ для recipes/stock/sales
+            'registered':  now,
+            'last_seen':   now,
+            'schema':      '2.0',
+        })
+
+        # Если есть username — создаём обратный индекс username → tg_key
+        # Это позволяет найти tg_key зная только username (для веб-калькуляторов)
+        if username:
+            try:
+                db.reference(f'username_index/{username}').set({
+                    'tg_key':    tg_key,
+                    'telegram_id': tg_id,
+                })
+            except Exception:
+                pass
+
+
 # ══════════════════════════════════════════════════════
 # HELPERS
 # ══════════════════════════════════════════════════════
@@ -30,8 +154,8 @@ def _flatten_recipes(raw: dict) -> list:
     """
     Возвращает плоский отсортированный список рецептов (dict).
     Поддерживает два уровня вложенности Firebase:
-      - recipes/{username}/{push_id}          → прямой рецепт
-      - recipes/{username}/{x}/{push_id}      → вложенный
+      - recipes/{key}/{push_id}          → прямой рецепт
+      - recipes/{key}/{x}/{push_id}      → вложенный
     """
     result = []
     for key, val in raw.items():
@@ -77,8 +201,17 @@ def _safe_float(val, default=0.0) -> float:
         return default
 
 
+async def _send_long(message: types.Message, text: str) -> None:
+    """Отправляет длинный текст, разбивая на части по 4000 символов."""
+    if len(text) > 4000:
+        for chunk in [text[i:i+4000] for i in range(0, len(text), 4000)]:
+            await message.answer(chunk, parse_mode='HTML')
+    else:
+        await message.answer(text, parse_mode='HTML')
+
+
 # ══════════════════════════════════════════════════════
-# ФОРМАТИРОВАНИЕ
+# ФОРМАТИРОВАНИЕ РЕЦЕПТОВ
 # ══════════════════════════════════════════════════════
 
 def format_recipe(recipe: dict) -> str:
@@ -230,13 +363,9 @@ def format_recipe_new(recipe: dict) -> str:
         )
 
     # ── Отходы ──
-    # stock_write_off может быть:
-    #   - dict с ключом 'per_portion' (catering формат)
-    #   - list напрямую (bakery формат)
     wo_raw = recipe.get('stock_write_off')
 
     if isinstance(wo_raw, dict):
-        # catering: {'per_portion': [...]}
         wo_items = _safe_list(wo_raw.get('per_portion'))
         waste_items = [
             {'name': w.get('ingredient', ''),
@@ -245,7 +374,6 @@ def format_recipe_new(recipe: dict) -> str:
             if isinstance(w, dict) and _safe_float(w.get('waste_g_per_unit')) > 0.5
         ]
     elif isinstance(wo_raw, list):
-        # bakery: [{'ingredient': ..., 'waste_g_per_batch': ...}]
         waste_items = [
             {'name': w.get('ingredient', ''),
              'waste': _safe_float(w.get('waste_g_per_unit')
@@ -273,17 +401,10 @@ def format_recipe_new(recipe: dict) -> str:
 
 @dp.message(Command('start'))
 async def cmd_start(message: types.Message):
-    username = message.from_user.username or ''
-    name     = message.from_user.first_name
-    uid      = str(message.from_user.id)
-    key      = username or uid
+    # Создаём/обновляем профиль с числовым telegram_id
+    _upsert_user(message)
 
-    db.reference(f'users/{key}').set({
-        'name': name,
-        'username': username,
-        'plan': 'free',
-        'registered': datetime.datetime.utcnow().isoformat()
-    })
+    name = message.from_user.first_name or 'друг'
 
     await message.answer(
         f'👋 Привет, <b>{name}</b>!\n\n'
@@ -306,16 +427,13 @@ async def cmd_start(message: types.Message):
 
 @dp.message(Command('recipes'))
 async def cmd_recipes(message: types.Message):
-    username = message.from_user.username
-    if not username:
-        await message.answer(
-            '⚠️ У тебя не установлен username в Telegram.\n'
-            'Настройки → Изменить профиль → Имя пользователя.'
-        )
-        return
+    # Обновляем last_seen при каждом обращении
+    _upsert_user(message)
+
+    data_key = _resolve_data_key(message)
 
     try:
-        raw = db.reference(f'recipes/{username}').get()
+        raw = db.reference(f'recipes/{data_key}').get()
     except Exception as e:
         await message.answer(f'❌ Ошибка Firebase: {e}')
         return
@@ -323,7 +441,10 @@ async def cmd_recipes(message: types.Message):
     if not raw:
         await message.answer(
             f'📋 Рецептур пока нет.\n\n'
-            f'Зайди на {SITE_URL}, посчитай и сохрани рецепт.'
+            f'Зайди на {SITE_URL}, посчитай и сохрани рецепт.\n'
+            f'<i>В поле «Telegram username» укажи: '
+            f'@{_get_username(message) or "свой_username"}</i>',
+            parse_mode='HTML'
         )
         return
 
@@ -366,11 +487,7 @@ async def cmd_recipes(message: types.Message):
 
     text += '\n<i>/recipe N — открыть полную техкарту</i>'
 
-    if len(text) > 4000:
-        for chunk in [text[i:i+4000] for i in range(0, len(text), 4000)]:
-            await message.answer(chunk, parse_mode='HTML')
-    else:
-        await message.answer(text, parse_mode='HTML')
+    await _send_long(message, text)
 
 
 # ══════════════════════════════════════════════════════
@@ -379,10 +496,7 @@ async def cmd_recipes(message: types.Message):
 
 @dp.message(Command('recipe'))
 async def cmd_recipe(message: types.Message):
-    username = message.from_user.username
-    if not username:
-        await message.answer('⚠️ Установи username в Telegram.')
-        return
+    _upsert_user(message)
 
     args = message.text.split()
     if len(args) < 2:
@@ -395,8 +509,10 @@ async def cmd_recipe(message: types.Message):
         await message.answer('Напиши число: /recipe 1')
         return
 
+    data_key = _resolve_data_key(message)
+
     try:
-        raw = db.reference(f'recipes/{username}').get()
+        raw = db.reference(f'recipes/{data_key}').get()
     except Exception as e:
         await message.answer(f'❌ Ошибка Firebase: {e}')
         return
@@ -424,11 +540,7 @@ async def cmd_recipe(message: types.Message):
         await message.answer(f'❌ Ошибка форматирования: {e}')
         return
 
-    if len(text) > 4000:
-        for chunk in [text[i:i+4000] for i in range(0, len(text), 4000)]:
-            await message.answer(chunk, parse_mode='HTML')
-    else:
-        await message.answer(text, parse_mode='HTML')
+    await _send_long(message, text)
 
 
 # ══════════════════════════════════════════════════════
@@ -437,14 +549,13 @@ async def cmd_recipe(message: types.Message):
 
 @dp.message(Command('stock'))
 async def cmd_stock(message: types.Message):
-    username = message.from_user.username
-    if not username:
-        await message.answer('⚠️ Установи username в Telegram.')
-        return
+    _upsert_user(message)
+
+    data_key = _resolve_data_key(message)
 
     try:
-        ingredients = db.reference(f'ingredients/{username}').get() or {}
-        stock_data  = db.reference(f'stock/{username}/main').get() or {}
+        ingredients = db.reference(f'ingredients/{data_key}').get() or {}
+        stock_data  = db.reference(f'stock/{data_key}/main').get() or {}
     except Exception as e:
         await message.answer(f'❌ Ошибка Firebase: {e}')
         return
@@ -498,11 +609,7 @@ async def cmd_stock(message: types.Message):
     text += f'💵 Стоимость склада: <b>{total_val:.0f} ₽</b>\n'
     text += f'\n<i>Управление: {SITE_URL}/stock.html</i>'
 
-    if len(text) > 4000:
-        for chunk in [text[i:i+4000] for i in range(0, len(text), 4000)]:
-            await message.answer(chunk, parse_mode='HTML')
-    else:
-        await message.answer(text, parse_mode='HTML')
+    await _send_long(message, text)
 
 
 # ══════════════════════════════════════════════════════
@@ -511,14 +618,13 @@ async def cmd_stock(message: types.Message):
 
 @dp.message(Command('lowstock'))
 async def cmd_lowstock(message: types.Message):
-    username = message.from_user.username
-    if not username:
-        await message.answer('⚠️ Установи username в Telegram.')
-        return
+    _upsert_user(message)
+
+    data_key = _resolve_data_key(message)
 
     try:
-        ingredients = db.reference(f'ingredients/{username}').get() or {}
-        stock_data  = db.reference(f'stock/{username}/main').get() or {}
+        ingredients = db.reference(f'ingredients/{data_key}').get() or {}
+        stock_data  = db.reference(f'stock/{data_key}/main').get() or {}
     except Exception as e:
         await message.answer(f'❌ Ошибка Firebase: {e}')
         return
@@ -581,13 +687,12 @@ async def cmd_lowstock(message: types.Message):
 
 @dp.message(Command('sales'))
 async def cmd_sales(message: types.Message):
-    username = message.from_user.username
-    if not username:
-        await message.answer('⚠️ Установи username в Telegram.')
-        return
+    _upsert_user(message)
+
+    data_key = _resolve_data_key(message)
 
     try:
-        raw = db.reference(f'sales/{username}/main').get()
+        raw = db.reference(f'sales/{data_key}/main').get()
     except Exception as e:
         await message.answer(f'❌ Ошибка Firebase: {e}')
         return
@@ -634,11 +739,7 @@ async def cmd_sales(message: types.Message):
     text += f'💚 Итого прибыль: <b>{total_profit:.0f} ₽</b>\n'
     text += f'\n<i>Аналитика: {SITE_URL}/sales.html</i>'
 
-    if len(text) > 4000:
-        for chunk in [text[i:i+4000] for i in range(0, len(text), 4000)]:
-            await message.answer(chunk, parse_mode='HTML')
-    else:
-        await message.answer(text, parse_mode='HTML')
+    await _send_long(message, text)
 
 
 # ══════════════════════════════════════════════════════
