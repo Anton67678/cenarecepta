@@ -27,23 +27,13 @@
   const auth = getAuth(app);
   signInAnonymously(auth).catch(console.error);
 
-  // Передаём Firebase-функции в window для доступа из pyra-link.js
-  window._pyraFirebase = { db, ref, get, update };
-
-  // Инициализируем блок привязки после загрузки DOM
-  // type="module" выполняется после парсинга — используем requestAnimationFrame
+  // Инициализируем блок привязки (pyra-link.js использует REST API напрямую)
   function _initPYRALink() {
     if (document.getElementById('pyra-link-block')) {
-      PYRALink.renderBlock('pyra-link-block',
-        window._pyraFirebase.db,
-        window._pyraFirebase.ref,
-        window._pyraFirebase.get,
-        window._pyraFirebase.update,
-        function(tgKey) {
-          const saveArea = document.getElementById('save-area');
-          if (saveArea) saveArea.style.display = 'block';
-        }
-      );
+      PYRALink.renderBlock('pyra-link-block', null, null, null, null, function(tgKey) {
+        const saveArea = document.getElementById('save-area');
+        if (saveArea) saveArea.style.display = 'block';
+      });
       _updateSaveVisibility();
     } else {
       requestAnimationFrame(_initPYRALink);
