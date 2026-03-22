@@ -5,10 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Кондитерский калькулятор — PYRA</title>
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,300;1,400&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<script src="pyra-link.js"></script>
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-import { getDatabase, ref, push, set } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
+import { getDatabase, ref, push, set, get, update } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
 import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
 
 const firebaseConfig = {
@@ -29,6 +30,15 @@ signInAnonymously(auth).catch(console.error);
 window._firebaseSet  = set;
 window._firebasePush = push;
 window._firebaseRef  = (path) => ref(db, path);
+
+document.addEventListener('DOMContentLoaded', () => {
+  PYRALink.renderBlock('pyra-link-block', db, ref, get, update, function(tgKey) {
+    const saveArea = document.getElementById('save-area');
+    if (saveArea) saveArea.style.display = 'block';
+  });
+  const saveArea = document.getElementById('save-area');
+  if (saveArea) saveArea.style.display = PYRALink.isLinked() ? 'block' : 'none';
+});
 </script>
 
 <style>
@@ -490,11 +500,10 @@ hr.sep{border:none;border-top:1px solid var(--border);margin:14px 0}
       <span class="sec-title">Сохранить в Telegram</span>
     </div>
     <div class="section-body">
-      <div class="field-row">
-        <div><div class="field-label">Telegram username</div><div class="field-hint">Без @ — например: baker_anna</div></div>
-        <input type="text" id="tg-username" placeholder="username">
+      <div id="pyra-link-block"></div>
+      <div id="save-area" style="display:none; margin-top:12px;">
+        <button class="calc-btn" id="save-btn" onclick="saveRecipe()">◆ Сохранить рецептуру</button>
       </div>
-      <button class="calc-btn" id="save-btn" onclick="saveRecipe()">◆ Сохранить рецептуру</button>
       <div id="save-msg" style="display:none;margin-top:10px;font-family:var(--mono);font-size:12px;padding:10px;border-radius:2px;background:var(--paper)"></div>
     </div>
   </div>
@@ -964,15 +973,15 @@ function sendToTTK() {
 // FIREBASE SAVE
 // ══════════════════════════════════════════════════════
 async function saveRecipe() {
-  const username = document.getElementById('tg-username').value.trim().replace('@','');
-  if (!username) { showSaveMsg('⚠️ Введи Telegram username','error'); return; }
+  const dataKey = PYRALink.getDataKey();
+  if (!dataKey) { showSaveMsg('⚠️ Сначала привяжи аккаунт через /link','error'); return; }
   if (!_lastJSON.name) { showSaveMsg('⚠️ Введи название изделия','error'); return; }
 
   const btn = document.getElementById('save-btn');
   btn.textContent = '⏳ Сохраняю...'; btn.disabled = true;
 
   try {
-    const newRef = window._firebasePush(window._firebaseRef(`recipes/${username}`));
+    const newRef = window._firebasePush(window._firebaseRef(`recipes/${dataKey}`));
     await window._firebaseSet(newRef, _lastJSON);
     showSaveMsg('✅ Сохранено! Напиши /recipes боту @cenarecepta_bot','success');
   } catch(e) {
