@@ -1,6 +1,8 @@
 import os
 import asyncio
 import json
+import random
+import string
 import datetime
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
@@ -121,14 +123,14 @@ def _upsert_user(message: types.Message) -> None:
         # Новый пользователь — создаём полный профиль
         # data_key: если есть username — используем его (веб-сайт пишет по username)
         # иначе — числовой ключ
-        data_key = username if username else tg_key
+        data_key = tg_key  # всегда числовой ключ — сайт теперь привязывается через /link
 
         ref.set({
             'telegram_id': tg_id,          # числовой, неизменяемый
             'username':    username or '',  # может меняться
             'name':        name,
             'plan':        'free',
-            'data_key':    data_key,        # ключ для recipes/stock/sales
+            'data_key':    data_key,        # ключ для recipes/stock/sales (всегда tg_{id})
             'registered':  now,
             'last_seen':   now,
             'schema':      '2.0',
@@ -396,6 +398,50 @@ def format_recipe_new(recipe: dict) -> str:
 
 
 # ══════════════════════════════════════════════════════
+# /link — привязка сайта к telegram_id
+# ══════════════════════════════════════════════════════
+
+def _generate_link_code() -> str:
+    """Генерирует 6-символьный буквенно-цифровой код (upper)."""
+    return ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
+
+
+@dp.message(Command('link'))
+async def cmd_link(message: types.Message):
+    """Генерирует одноразовый код для привязки сайта к этому аккаунту."""
+    _upsert_user(message)
+    tg_key = _get_user_key(message)
+    tg_id  = message.from_user.id
+    code   = _generate_link_code()
+    now    = datetime.datetime.utcnow()
+    expires = (now + datetime.timedelta(minutes=10)).isoformat()
+
+    try:
+        db.reference(f'link_codes/{code}').set({
+            'tg_key':     tg_key,
+            'telegram_id': tg_id,
+            'expires':    expires,
+            'used':       False,
+        })
+    except Exception as e:
+        await message.answer(
+            '❌ Ошибка генерации кода. Попробуй ещё раз.',
+            parse_mode='HTML'
+        )
+        return
+
+    await message.answer(
+        f'🔗 <b>Код привязки сайта:</b>\n\n'
+        f'<code>{code}</code>\n\n'
+        f'Введи этот код на сайте в поле «Код привязки» и нажми «Проверить».\n'
+        f'Код действует <b>10 минут</b>.\n\n'
+        f'📌 <a href="{SITE_URL}">calc.pyra.com.ru</a>',
+        parse_mode='HTML',
+        disable_web_page_preview=True
+    )
+
+
+# ══════════════════════════════════════════════════════
 # /start
 # ══════════════════════════════════════════════════════
 
@@ -416,6 +462,7 @@ async def cmd_start(message: types.Message):
         f'/stock — остатки склада\n'
         f'/lowstock — критические позиции\n'
         f'/sales — последние продажи\n'
+        f'/link — привязать сайт к аккаунту\n'
         f'/help — помощь',
         parse_mode='HTML'
     )
@@ -759,7 +806,8 @@ async def cmd_help(message: types.Message):
         '<b>Продажи:</b>\n'
         '/sales — последние 10 продаж\n\n'
         f'🌐 <b>Сайт:</b> {SITE_URL}\n'
-        'Рецептуры сохраняются через сайт.',
+        'Рецептуры сохраняются через сайт.\n\n'
+        '🔗 /link — получить код привязки сайта',
         parse_mode='HTML'
     )
 
