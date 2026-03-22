@@ -27,13 +27,22 @@
   // Анонимный вход
   signInAnonymously(auth).catch(console.error);
 
+  document.addEventListener('DOMContentLoaded', () => {
+    PYRALink.renderBlock('pyra-link-block', db, ref, get, update, function(tgKey) {
+      const saveArea = document.getElementById('save-area');
+      if (saveArea) saveArea.style.display = 'block';
+    });
+    const saveArea = document.getElementById('save-area');
+    if (saveArea) saveArea.style.display = PYRALink.isLinked() ? 'block' : 'none';
+  });
+
   // Глобальная функция сохранения
   window.saveRecipe = async function() {
-    const tgUsername = document.getElementById('tg-username').value.trim().replace('@','');
+    const dataKey    = PYRALink.getDataKey();
     const recipeName = document.getElementById('recipe-name').value.trim();
 
-    if (!tgUsername) {
-      showSaveMsg('⚠️ Введи Telegram username', 'error');
+    if (!dataKey) {
+      showSaveMsg('⚠️ Сначала привяжи аккаунт через /link', 'error');
       return;
     }
     if (!recipeName) {
@@ -111,7 +120,7 @@
         price_per_unit: parseFloat(priceEl) || 0
       };
 
-      const recipeRef = ref(db, `recipes/${tgUsername}`);
+      const recipeRef = ref(db, `recipes/${dataKey}`);
       const newRef = push(recipeRef);
       await set(newRef, recipe);
 
@@ -1018,14 +1027,10 @@
       <span class="section-title">Сохранить рецептуру в Telegram</span>
     </div>
     <div class="section-body">
-      <div class="field-row">
-        <div>
-          <div class="field-label">Твой Telegram username</div>
-          <div class="field-hint">Без @ — например: anna_cake</div>
-        </div>
-        <input type="text" id="tg-username" placeholder="username">
+      <div id="pyra-link-block"></div>
+      <div id="save-area" style="display:none; margin-top:12px;">
+        <button class="calc-btn" id="save-btn" onclick="saveRecipe()" style="margin-top:8px">◆ Сохранить рецептуру</button>
       </div>
-      <button class="calc-btn" id="save-btn" onclick="saveRecipe()" style="margin-top:8px">◆ Сохранить рецептуру</button>
       <div id="save-msg" style="display:none;margin-top:12px;font-family:var(--font-mono);font-size:13px;padding:10px;border-radius:2px;background:var(--paper)"></div>
     </div>
   </div>
