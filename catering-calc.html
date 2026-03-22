@@ -5,10 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Калькулятор общепита — ГОСТ Р 31987-2012</title>
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,300;1,400&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<script src="pyra-link.js"></script>
 
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-  import { getDatabase, ref, set, push } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
+  import { getDatabase, ref, set, push, get, update } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
   import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
 
   const firebaseConfig = {
@@ -26,6 +27,17 @@
   const auth = getAuth(app);
   signInAnonymously(auth).catch(console.error);
 
+  // Инициализируем модуль привязки после загрузки DOM
+  document.addEventListener('DOMContentLoaded', () => {
+    PYRALink.renderBlock('pyra-link-block', db, ref, get, update, function(tgKey) {
+      // После привязки скрываем инструкцию и показываем кнопку сохранения
+      const saveArea = document.getElementById('save-area');
+      if (saveArea) saveArea.style.display = 'block';
+    });
+    // Показываем/скрываем кнопку в зависимости от статуса
+    _updateSaveVisibility();
+  });
+
   // ── Санитайзер: убирает undefined / NaN / Infinity ──
   function sanitize(obj) {
     if (obj === null || obj === undefined) return null;
@@ -40,12 +52,17 @@
     return out;
   }
 
+  window._updateSaveVisibility = function() {
+    const saveArea = document.getElementById('save-area');
+    if (saveArea) saveArea.style.display = PYRALink.isLinked() ? 'block' : 'none';
+  };
+
   window.saveRecipeOHP = async function() {
-    const tgUsername = document.getElementById('tg-username').value.trim().replace('@','');
+    const dataKey    = PYRALink.getDataKey();
     const recipeName = document.getElementById('dish-name').value.trim();
 
-    if (!tgUsername) { showSaveMsg('⚠️ Введи Telegram username', 'error'); return; }
-    if (!recipeName) { showSaveMsg('⚠️ Введи название блюда',    'error'); return; }
+    if (!dataKey)    { showSaveMsg('⚠️ Сначала привяжи аккаунт через /link', 'error'); return; }
+    if (!recipeName) { showSaveMsg('⚠️ Введи название блюда', 'error'); return; }
 
     const btn = document.getElementById('save-btn');
     btn.textContent = '⏳ Сохраняю...';
@@ -145,7 +162,7 @@
       // Прогоняем через санитайзер — убиваем все undefined/NaN
       const safe = sanitize(recipe);
 
-      const newRef = push(ref(db, `recipes/${tgUsername}`));
+      const newRef = push(ref(db, `recipes/${dataKey}`));
       await set(newRef, safe);
 
       showSaveMsg('✅ Сохранено! Напиши /recipes боту @cenarecepta_bot', 'success');
@@ -835,11 +852,12 @@ input[type=range]::-webkit-slider-thumb {
       <span class="section-title">Сохранить в Telegram</span>
     </div>
     <div class="section-body">
-      <div class="field-row">
-        <div><div class="field-label">Telegram username</div><div class="field-hint">Без @ — например: chef_ivan</div></div>
-        <input type="text" id="tg-username" placeholder="username">
+      <!-- Блок привязки аккаунта -->
+      <div id="pyra-link-block"></div>
+      <!-- Кнопка сохранения (скрыта пока аккаунт не привязан) -->
+      <div id="save-area" style="display:none; margin-top:12px;">
+        <button class="calc-btn" id="save-btn" onclick="saveRecipeOHP()">◆ Сохранить рецептуру</button>
       </div>
-      <button class="calc-btn" id="save-btn" onclick="saveRecipeOHP()">◆ Сохранить рецептуру</button>
       <div id="save-msg" style="display:none;margin-top:10px;font-family:var(--font-mono);font-size:12px;padding:10px;border-radius:2px;background:var(--paper)"></div>
     </div>
   </div>
