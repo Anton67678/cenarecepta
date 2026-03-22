@@ -27,18 +27,12 @@
   // Анонимный вход
   signInAnonymously(auth).catch(console.error);
 
-  window._pyraFirebase = { db, ref, get, update };
-
   function _initPYRALink() {
     if (document.getElementById('pyra-link-block')) {
-      PYRALink.renderBlock('pyra-link-block',
-        window._pyraFirebase.db, window._pyraFirebase.ref,
-        window._pyraFirebase.get, window._pyraFirebase.update,
-        function(tgKey) {
-          const saveArea = document.getElementById('save-area');
-          if (saveArea) saveArea.style.display = 'block';
-        }
-      );
+      PYRALink.renderBlock('pyra-link-block', null, null, null, null, function(tgKey) {
+        const saveArea = document.getElementById('save-area');
+        if (saveArea) saveArea.style.display = 'block';
+      });
       const saveArea = document.getElementById('save-area');
       if (saveArea) saveArea.style.display = PYRALink.isLinked() ? 'block' : 'none';
     } else {
