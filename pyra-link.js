@@ -1,159 +1,132 @@
 /**
- * pyra-link.js — модуль привязки аккаунта Telegram к сайту PYRA.
- *
- * Логика:
- *  1. Пользователь пишет /link боту → получает 6-значный код.
- *  2. Вводит код на сайте → JS читает /link_codes/{code} из Firebase.
- *  3. Если код валидный (не просрочен, не использован) →
- *     - сохраняет tg_key и telegram_id в localStorage
- *     - помечает код как использованный (used: true)
- *  4. Все функции сохранения данных используют tg_key из localStorage
- *     вместо ручного ввода username.
- *
- * Использование:
- *  - Подключить скрипт после Firebase SDK:
- *    <script src="pyra-link.js"></script>
- *  - Вставить блок привязки в HTML:
- *    <div id="pyra-link-block"></div>
- *    <script>PYRALink.renderBlock('pyra-link-block');</script>
- *  - Получить текущий data_key:
- *    const key = PYRALink.getDataKey(); // "tg_123456789" или null
+ * pyra-link.js — модуль привязки Telegram-аккаунта к сайту PYRA.
+ * Самодостаточный: инициализирует Firebase SDK независимо от страницы.
  */
 
-window.PYRALink = (function() {
+// ── Firebase SDK (CDN, compat версия — работает без ES module) ──────────────
+(function() {
+  'use strict';
 
-  const LS_KEY_TG_KEY  = 'pyra_tg_key';
-  const LS_KEY_TG_ID   = 'pyra_tg_id';
-  const LS_KEY_NAME    = 'pyra_tg_name';
+  const FIREBASE_CONFIG = {
+    apiKey:            "AIzaSyCEWWRUKpJ2tJdsUkTfMTKTH7Lfmc9dZs0",
+    authDomain:        "cenarecepta-calc.firebaseapp.com",
+    databaseURL:       "https://cenarecepta-calc-default-rtdb.europe-west1.firebasedatabase.app",
+    projectId:         "cenarecepta-calc",
+    storageBucket:     "cenarecepta-calc.firebasestorage.app",
+    messagingSenderId: "72447381131",
+    appId:             "1:72447381131:web:dee8cf51dd3af8133d4e8e"
+  };
 
-  // ── Чтение из localStorage ────────────────────────────────────────────────
+  const LS_TG_KEY  = 'pyra_tg_key';
+  const LS_TG_ID   = 'pyra_tg_id';
 
-  function getDataKey() {
-    return localStorage.getItem(LS_KEY_TG_KEY) || null;
+  // ── Firebase REST API (не требует SDK) ─────────────────────────────────────
+  // Используем Firebase REST API напрямую — нет конфликтов с ES modules
+
+  const DB_URL = "https://cenarecepta-calc-default-rtdb.europe-west1.firebasedatabase.app";
+
+  async function dbGet(path) {
+    const res = await fetch(`${DB_URL}/${path}.json`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json();
   }
 
-  function getTelegramId() {
-    return localStorage.getItem(LS_KEY_TG_ID) || null;
+  async function dbPatch(path, data) {
+    const res = await fetch(`${DB_URL}/${path}.json`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json();
   }
 
-  function isLinked() {
-    return !!getDataKey();
-  }
+  // ── localStorage helpers ───────────────────────────────────────────────────
+
+  function getDataKey()   { return localStorage.getItem(LS_TG_KEY) || null; }
+  function getTelegramId(){ return localStorage.getItem(LS_TG_ID)  || null; }
+  function isLinked()     { return !!getDataKey(); }
 
   function clearLink() {
-    localStorage.removeItem(LS_KEY_TG_KEY);
-    localStorage.removeItem(LS_KEY_TG_ID);
-    localStorage.removeItem(LS_KEY_NAME);
+    localStorage.removeItem(LS_TG_KEY);
+    localStorage.removeItem(LS_TG_ID);
   }
 
-  // ── Проверка кода через Firebase ─────────────────────────────────────────
+  // ── Проверка кода ──────────────────────────────────────────────────────────
 
-  /**
-   * Проверяет код и, если он валидный, сохраняет привязку.
-   * Возвращает Promise<{ ok: boolean, message: string }>
-   */
-  async function verifyCode(code, db, ref, get, update) {
-    if (!code || code.length !== 6) {
+  async function verifyCode(code) {
+    const upper = (code || '').trim().toUpperCase();
+    if (upper.length !== 6) {
       return { ok: false, message: 'Введи 6-значный код из бота.' };
     }
 
-    const upperCode = code.trim().toUpperCase();
-    const codeRef   = ref(db, `link_codes/${upperCode}`);
-
-    let snap;
+    let data;
     try {
-      snap = await get(codeRef);
-    } catch (e) {
-      return { ok: false, message: 'Ошибка соединения с сервером.' };
+      data = await dbGet(`link_codes/${upper}`);
+    } catch(e) {
+      return { ok: false, message: '❌ Ошибка соединения: ' + e.message };
     }
 
-    if (!snap.exists()) {
+    if (!data) {
       return { ok: false, message: '❌ Код не найден. Запроси новый через /link.' };
     }
 
-    const data = snap.val();
-
-    // Проверка срока действия
-    const expires = new Date(data.expires);
-    if (new Date() > expires) {
+    if (new Date() > new Date(data.expires)) {
       return { ok: false, message: '⏱ Код истёк. Запроси новый через /link.' };
     }
 
-    // Проверка что не использован
     if (data.used) {
-      return { ok: false, message: '✅ Этот код уже использован. Запроси новый через /link.' };
+      return { ok: false, message: '✅ Код уже использован. Запроси новый через /link.' };
     }
 
     // Помечаем как использованный
-    try {
-      await update(codeRef, { used: true });
-    } catch (e) {
-      // Некритично — продолжаем
-    }
+    try { await dbPatch(`link_codes/${upper}`, { used: true }); } catch(e) {}
 
     // Сохраняем привязку
-    localStorage.setItem(LS_KEY_TG_KEY, data.tg_key);
-    localStorage.setItem(LS_KEY_TG_ID,  String(data.telegram_id));
+    localStorage.setItem(LS_TG_KEY, data.tg_key);
+    localStorage.setItem(LS_TG_ID,  String(data.telegram_id));
 
     return { ok: true, message: '✅ Аккаунт привязан! Теперь можно сохранять рецептуры.' };
   }
 
-  // ── Рендер блока привязки ─────────────────────────────────────────────────
+  // ── Рендер блока ───────────────────────────────────────────────────────────
 
-  /**
-   * Вставляет готовый HTML-блок привязки в элемент с заданным id.
-   * Вызывать после загрузки DOM и инициализации Firebase.
-   *
-   * @param {string}   containerId  — id контейнера
-   * @param {object}   firebaseDb   — объект database из Firebase SDK
-   * @param {function} fbRef        — ref из Firebase SDK
-   * @param {function} fbGet        — get из Firebase SDK
-   * @param {function} fbUpdate     — update из Firebase SDK
-   * @param {function} onLinked     — callback(tg_key) после успешной привязки
-   */
-  function renderBlock(containerId, firebaseDb, fbRef, fbGet, fbUpdate, onLinked) {
+  function renderBlock(containerId, _db, _ref, _get, _update, onLinked) {
+    // _db, _ref, _get, _update — игнорируем, используем REST API
     const container = document.getElementById(containerId);
     if (!container) return;
 
-    function _render() {
-      const linked = isLinked();
-      const tgKey  = getDataKey();
-
-      if (linked) {
-        container.innerHTML = `
-          <div class="link-status link-ok">
-            <span>🔗 Аккаунт привязан</span>
-            <button class="link-unlink-btn" onclick="PYRALink._unlink('${containerId}', arguments[0])">Отвязать</button>
-          </div>`;
-      } else {
-        container.innerHTML = `
-          <div class="link-block">
-            <div class="link-instruction">
-              Напиши боту <a href="https://t.me/cenarecepta_bot" target="_blank">@cenarecepta_bot</a>
-              команду <code>/link</code> и введи полученный код:
-            </div>
-            <div class="link-input-row">
-              <input type="text" id="pyra-link-code-input"
-                     maxlength="6" placeholder="ABC123"
-                     autocomplete="off" autocorrect="off"
-                     style="text-transform:uppercase; letter-spacing:0.15em;">
-              <button id="pyra-link-verify-btn" onclick="PYRALink._doVerify('${containerId}')">
-                Проверить
-              </button>
-            </div>
-            <div id="pyra-link-msg" class="link-msg"></div>
-          </div>`;
-      }
-    }
-
-    // Сохраняем ссылки на Firebase-функции для использования в _doVerify
-    window._pyraLinkFirebase = { db: firebaseDb, ref: fbRef, get: fbGet, update: fbUpdate };
     window._pyraLinkCallback = onLinked || function() {};
 
-    _render();
+    if (isLinked()) {
+      container.innerHTML = `
+        <div class="link-status link-ok">
+          <span>🔗 Аккаунт привязан</span>
+          <button class="link-unlink-btn" onclick="PYRALink._unlink('${containerId}')">Отвязать</button>
+        </div>`;
+    } else {
+      container.innerHTML = `
+        <div class="link-block">
+          <div class="link-instruction">
+            Напиши боту <a href="https://t.me/cenarecepta_bot" target="_blank">@cenarecepta_bot</a>
+            команду <code>/link</code> и введи полученный код:
+          </div>
+          <div class="link-input-row">
+            <input type="text" id="pyra-link-code-input"
+                   maxlength="6" placeholder="ABC123"
+                   autocomplete="off" autocorrect="off"
+                   style="text-transform:uppercase; letter-spacing:0.15em;"
+                   onkeydown="if(event.key==='Enter') PYRALink._doVerify('${containerId}')">
+            <button id="pyra-link-verify-btn" onclick="PYRALink._doVerify('${containerId}')">
+              Проверить
+            </button>
+          </div>
+          <div id="pyra-link-msg" class="link-msg"></div>
+        </div>`;
+    }
   }
 
-  // ── Внутренние обработчики (вызываются из inline onclick) ─────────────────
+  // ── Обработчики ────────────────────────────────────────────────────────────
 
   async function _doVerify(containerId) {
     const input = document.getElementById('pyra-link-code-input');
@@ -164,16 +137,9 @@ window.PYRALink = (function() {
     const code = input.value.trim().toUpperCase();
 
     if (btn) { btn.disabled = true; btn.textContent = 'Проверяю...'; }
-    if (msgEl) msgEl.textContent = '';
+    if (msgEl) { msgEl.textContent = ''; msgEl.className = 'link-msg'; }
 
-    const fb = window._pyraLinkFirebase || window._pyraFirebase;
-    if (!fb) {
-      if (msgEl) msgEl.textContent = '❌ Firebase не инициализирован.';
-      if (btn) { btn.disabled = false; btn.textContent = 'Проверить'; }
-      return;
-    }
-
-    const result = await verifyCode(code, fb.db, fb.ref, fb.get, fb.update);
+    const result = await verifyCode(code);
 
     if (msgEl) {
       msgEl.textContent = result.message;
@@ -181,14 +147,8 @@ window.PYRALink = (function() {
     }
 
     if (result.ok) {
-      const tgKey = getDataKey();
-      if (window._pyraLinkCallback) window._pyraLinkCallback(tgKey);
-      // Перерендеривае блок через 1.2с
-      setTimeout(() => renderBlock(
-        containerId,
-        fb.db, fb.ref, fb.get, fb.update,
-        window._pyraLinkCallback
-      ), 1200);
+      if (window._pyraLinkCallback) window._pyraLinkCallback(getDataKey());
+      setTimeout(() => renderBlock(containerId, null, null, null, null, window._pyraLinkCallback), 1000);
     } else {
       if (btn) { btn.disabled = false; btn.textContent = 'Проверить'; }
     }
@@ -196,53 +156,54 @@ window.PYRALink = (function() {
 
   function _unlink(containerId) {
     clearLink();
-    const fb = window._pyraLinkFirebase;
-    renderBlock(containerId, fb.db, fb.ref, fb.get, fb.update, window._pyraLinkCallback);
+    renderBlock(containerId, null, null, null, null, window._pyraLinkCallback);
   }
 
-  // ── CSS ───────────────────────────────────────────────────────────────────
+  // ── CSS ────────────────────────────────────────────────────────────────────
 
   function injectStyles() {
     if (document.getElementById('pyra-link-styles')) return;
-    const style = document.createElement('style');
-    style.id = 'pyra-link-styles';
-    style.textContent = `
+    const s = document.createElement('style');
+    s.id = 'pyra-link-styles';
+    s.textContent = `
       .link-block { margin: 12px 0; }
-      .link-instruction { font-size: 13px; color: #555; margin-bottom: 8px; }
-      .link-instruction code { background: #f0f0f0; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
-      .link-instruction a { color: #2563eb; }
+      .link-instruction { font-size: 13px; color: #888; margin-bottom: 8px; }
+      .link-instruction code { background: rgba(255,255,255,.1); padding: 1px 6px; border-radius: 4px; font-size: 13px; }
+      .link-instruction a { color: #60a5fa; }
       .link-input-row { display: flex; gap: 8px; align-items: center; }
       .link-input-row input {
-        width: 110px; padding: 8px 10px; border: 1.5px solid #d1d5db;
-        border-radius: 8px; font-size: 16px; font-weight: 600;
+        width: 110px; padding: 8px 10px; border: 1.5px solid #444;
+        border-radius: 8px; font-size: 16px; font-weight: 700;
+        background: rgba(255,255,255,.07); color: #fff;
       }
-      .link-input-row input:focus { outline: none; border-color: #2563eb; }
-      .link-input-row button, #pyra-link-verify-btn {
-        padding: 8px 16px; background: #2563eb; color: #fff;
-        border: none; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 600;
+      .link-input-row input:focus { outline: none; border-color: #60a5fa; }
+      #pyra-link-verify-btn {
+        padding: 8px 18px; background: #2563eb; color: #fff;
+        border: none; border-radius: 8px; cursor: pointer;
+        font-size: 14px; font-weight: 600; transition: background .15s;
       }
-      .link-input-row button:disabled { background: #93c5fd; cursor: not-allowed; }
-      .link-msg { margin-top: 6px; font-size: 13px; }
-      .link-msg-ok  { color: #16a34a; }
-      .link-msg-err { color: #dc2626; }
-      .link-status { display: flex; align-items: center; gap: 10px; font-size: 13px; padding: 8px 12px;
-                     background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; }
-      .link-status.link-ok { color: #15803d; }
+      #pyra-link-verify-btn:hover { background: #1d4ed8; }
+      #pyra-link-verify-btn:disabled { background: #1e3a6e; cursor: not-allowed; }
+      .link-msg { margin-top: 7px; font-size: 13px; min-height: 18px; }
+      .link-msg-ok  { color: #4ade80; }
+      .link-msg-err { color: #f87171; }
+      .link-status { display: flex; align-items: center; gap: 10px; font-size: 13px;
+                     padding: 8px 12px; background: rgba(74,222,128,.1);
+                     border: 1px solid rgba(74,222,128,.3); border-radius: 8px; color: #4ade80; }
       .link-unlink-btn { background: none; border: none; color: #6b7280;
                          cursor: pointer; font-size: 12px; text-decoration: underline; }
     `;
-    document.head.appendChild(style);
+    document.head.appendChild(s);
   }
 
-  // Инжектируем стили сразу при загрузке модуля
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', injectStyles);
   } else {
     injectStyles();
   }
 
-  // ── Public API ────────────────────────────────────────────────────────────
-  return {
+  // ── Public API ─────────────────────────────────────────────────────────────
+  window.PYRALink = {
     getDataKey,
     getTelegramId,
     isLinked,
