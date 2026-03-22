@@ -166,7 +166,7 @@ window.PYRALink = (function() {
     if (btn) { btn.disabled = true; btn.textContent = 'Проверяю...'; }
     if (msgEl) msgEl.textContent = '';
 
-    const fb = window._pyraLinkFirebase;
+    const fb = window._pyraLinkFirebase || window._pyraFirebase;
     if (!fb) {
       if (msgEl) msgEl.textContent = '❌ Firebase не инициализирован.';
       if (btn) { btn.disabled = false; btn.textContent = 'Проверить'; }
