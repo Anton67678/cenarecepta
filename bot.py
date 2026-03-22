@@ -414,7 +414,7 @@ async def cmd_link(message: types.Message):
     tg_id  = message.from_user.id
     code   = _generate_link_code()
     now    = datetime.datetime.utcnow()
-    expires = (now + datetime.timedelta(minutes=10)).isoformat()
+    expires = (now + datetime.timedelta(minutes=60)).isoformat() + 'Z'
 
     try:
         db.reference(f'link_codes/{code}').set({
@@ -434,7 +434,7 @@ async def cmd_link(message: types.Message):
         f'🔗 <b>Код привязки сайта:</b>\n\n'
         f'<code>{code}</code>\n\n'
         f'Введи этот код на сайте в поле «Код привязки» и нажми «Проверить».\n'
-        f'Код действует <b>10 минут</b>.\n\n'
+        f'Код действует <b>60 минут</b>.\n\n'
         f'📌 <a href="{SITE_URL}">calc.pyra.com.ru</a>',
         parse_mode='HTML',
         disable_web_page_preview=True
