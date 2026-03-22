@@ -27,16 +27,29 @@
   const auth = getAuth(app);
   signInAnonymously(auth).catch(console.error);
 
-  // Инициализируем модуль привязки после загрузки DOM
-  document.addEventListener('DOMContentLoaded', () => {
-    PYRALink.renderBlock('pyra-link-block', db, ref, get, update, function(tgKey) {
-      // После привязки скрываем инструкцию и показываем кнопку сохранения
-      const saveArea = document.getElementById('save-area');
-      if (saveArea) saveArea.style.display = 'block';
-    });
-    // Показываем/скрываем кнопку в зависимости от статуса
-    _updateSaveVisibility();
-  });
+  // Передаём Firebase-функции в window для доступа из pyra-link.js
+  window._pyraFirebase = { db, ref, get, update };
+
+  // Инициализируем блок привязки после загрузки DOM
+  // type="module" выполняется после парсинга — используем requestAnimationFrame
+  function _initPYRALink() {
+    if (document.getElementById('pyra-link-block')) {
+      PYRALink.renderBlock('pyra-link-block',
+        window._pyraFirebase.db,
+        window._pyraFirebase.ref,
+        window._pyraFirebase.get,
+        window._pyraFirebase.update,
+        function(tgKey) {
+          const saveArea = document.getElementById('save-area');
+          if (saveArea) saveArea.style.display = 'block';
+        }
+      );
+      _updateSaveVisibility();
+    } else {
+      requestAnimationFrame(_initPYRALink);
+    }
+  }
+  _initPYRALink();
 
   // ── Санитайзер: убирает undefined / NaN / Infinity ──
   function sanitize(obj) {
