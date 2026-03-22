@@ -489,8 +489,7 @@ async def cmd_recipes(message: types.Message):
         await message.answer(
             f'📋 Рецептур пока нет.\n\n'
             f'Зайди на {SITE_URL}, посчитай и сохрани рецепт.\n'
-            f'<i>В поле «Telegram username» укажи: '
-            f'@{_get_username(message) or "свой_username"}</i>',
+            f'Для привязки аккаунта используй команду /link.',
             parse_mode='HTML'
         )
         return
