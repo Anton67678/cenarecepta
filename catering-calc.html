@@ -27,19 +27,7 @@
   const auth = getAuth(app);
   signInAnonymously(auth).catch(console.error);
 
-  // Инициализируем блок привязки (pyra-link.js использует REST API напрямую)
-  function _initPYRALink() {
-    if (document.getElementById('pyra-link-block')) {
-      PYRALink.renderBlock('pyra-link-block', null, null, null, null, function(tgKey) {
-        const saveArea = document.getElementById('save-area');
-        if (saveArea) saveArea.style.display = 'block';
-      });
-      _updateSaveVisibility();
-    } else {
-      requestAnimationFrame(_initPYRALink);
-    }
-  }
-  _initPYRALink();
+
 
   // ── Санитайзер: убирает undefined / NaN / Infinity ──
   function sanitize(obj) {
@@ -1714,7 +1702,23 @@ function savePDF() {
     </style>
   </head><body>${activePanel.innerHTML}
   <script>window.onload=()=>{window.print();}<\/script>
-  </body></html>`);
+  
+<script>
+// Инициализация блока привязки — запускается после загрузки всех скриптов
+(function waitForPYRALink() {
+  if (window.PYRALink) {
+    PYRALink.renderBlock('pyra-link-block', null, null, null, null, function() {
+      var saveArea = document.getElementById('save-area');
+      if (saveArea) saveArea.style.display = 'block';
+    });
+    var saveArea = document.getElementById('save-area');
+    if (saveArea) saveArea.style.display = PYRALink.isLinked() ? 'block' : 'none';
+  } else {
+    setTimeout(waitForPYRALink, 50);
+  }
+})();
+</script>
+</body></html>`);
   w.document.close();
 }
 
@@ -1749,6 +1753,22 @@ function savePDF() {
   document.getElementById('serving-temp').value = '75';
 
   calc();
+})();
+</script>
+
+<script>
+// Инициализация блока привязки — запускается после загрузки всех скриптов
+(function waitForPYRALink() {
+  if (window.PYRALink) {
+    PYRALink.renderBlock('pyra-link-block', null, null, null, null, function() {
+      var saveArea = document.getElementById('save-area');
+      if (saveArea) saveArea.style.display = 'block';
+    });
+    var saveArea = document.getElementById('save-area');
+    if (saveArea) saveArea.style.display = PYRALink.isLinked() ? 'block' : 'none';
+  } else {
+    setTimeout(waitForPYRALink, 50);
+  }
 })();
 </script>
 </body>
