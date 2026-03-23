@@ -27,19 +27,7 @@
   // Анонимный вход
   signInAnonymously(auth).catch(console.error);
 
-  function _initPYRALink() {
-    if (document.getElementById('pyra-link-block')) {
-      PYRALink.renderBlock('pyra-link-block', null, null, null, null, function(tgKey) {
-        const saveArea = document.getElementById('save-area');
-        if (saveArea) saveArea.style.display = 'block';
-      });
-      const saveArea = document.getElementById('save-area');
-      if (saveArea) saveArea.style.display = PYRALink.isLinked() ? 'block' : 'none';
-    } else {
-      requestAnimationFrame(_initPYRALink);
-    }
-  }
-  _initPYRALink();
+
 
   // Глобальная функция сохранения
   window.saveRecipe = async function() {
@@ -1564,6 +1552,22 @@ function goToTTK() {
 document.getElementById('ttkModalOverlay').addEventListener('click', function(e) {
   if (e.target === this) closeTTKModal();
 });
+</script>
+
+<script>
+// Инициализация блока привязки — запускается после загрузки всех скриптов
+(function waitForPYRALink() {
+  if (window.PYRALink) {
+    PYRALink.renderBlock('pyra-link-block', null, null, null, null, function() {
+      var saveArea = document.getElementById('save-area');
+      if (saveArea) saveArea.style.display = 'block';
+    });
+    var saveArea = document.getElementById('save-area');
+    if (saveArea) saveArea.style.display = PYRALink.isLinked() ? 'block' : 'none';
+  } else {
+    setTimeout(waitForPYRALink, 50);
+  }
+})();
 </script>
 </body>
 </html>
