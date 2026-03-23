@@ -60,7 +60,12 @@
     btn.disabled = true;
 
     try {
-      // getCalcState определена в основном <script> — вызываем её
+      // getCalcState определена в основном <script>
+      if (typeof window.getCalcState !== 'function') {
+        showSaveMsg('❌ Страница ещё загружается, попробуй ещё раз', 'error');
+        btn.textContent = '◆ Сохранить рецептуру'; btn.disabled = false;
+        return;
+      }
       const s = window.getCalcState();
 
       const recipe = {
@@ -1703,21 +1708,6 @@ function savePDF() {
   </head><body>${activePanel.innerHTML}
   <script>window.onload=()=>{window.print();}<\/script>
   
-<script>
-// Инициализация блока привязки — запускается после загрузки всех скриптов
-(function waitForPYRALink() {
-  if (window.PYRALink) {
-    PYRALink.renderBlock('pyra-link-block', null, null, null, null, function() {
-      var saveArea = document.getElementById('save-area');
-      if (saveArea) saveArea.style.display = 'block';
-    });
-    var saveArea = document.getElementById('save-area');
-    if (saveArea) saveArea.style.display = PYRALink.isLinked() ? 'block' : 'none';
-  } else {
-    setTimeout(waitForPYRALink, 50);
-  }
-})();
-</script>
 </body></html>`);
   w.document.close();
 }
