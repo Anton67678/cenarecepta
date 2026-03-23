@@ -31,19 +31,7 @@ window._firebaseSet  = set;
 window._firebasePush = push;
 window._firebaseRef  = (path) => ref(db, path);
 
-function _initPYRALink() {
-  if (document.getElementById('pyra-link-block')) {
-    PYRALink.renderBlock('pyra-link-block', null, null, null, null, function(tgKey) {
-      const saveArea = document.getElementById('save-area');
-      if (saveArea) saveArea.style.display = 'block';
-    });
-    const saveArea = document.getElementById('save-area');
-    if (saveArea) saveArea.style.display = PYRALink.isLinked() ? 'block' : 'none';
-  } else {
-    requestAnimationFrame(_initPYRALink);
-  }
-}
-_initPYRALink();
+
 </script>
 
 <style>
@@ -1076,6 +1064,22 @@ function fmt(n) { return (parseFloat(n)||0).toFixed(2); }
   document.getElementById('ov-batches-month').value = '20';
 
   calc();
+})();
+</script>
+
+<script>
+// Инициализация блока привязки — запускается после загрузки всех скриптов
+(function waitForPYRALink() {
+  if (window.PYRALink) {
+    PYRALink.renderBlock('pyra-link-block', null, null, null, null, function() {
+      var saveArea = document.getElementById('save-area');
+      if (saveArea) saveArea.style.display = 'block';
+    });
+    var saveArea = document.getElementById('save-area');
+    if (saveArea) saveArea.style.display = PYRALink.isLinked() ? 'block' : 'none';
+  } else {
+    setTimeout(waitForPYRALink, 50);
+  }
 })();
 </script>
 </body>
